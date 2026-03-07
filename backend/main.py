@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -116,6 +116,53 @@ async def generate_problem(request: Request):
         return json.loads(text_response)
     except Exception as e:
         return {"error": str(e)}
+
+@app.post("/extract")
+async def extract_content(file: UploadFile = File(...)):
+    allowed_types = {"application/pdf", "image/png", "image/jpeg"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}")
+
+    if not GEMINI_API_KEY:
+        return {
+            "concepts": {
+                "topics": ["Derivatives", "Power Rule"],
+                "formulas": ["d/dx[x^n] = nx^(n-1)"],
+                "concepts": ["Rate of change", "Slope of tangent line"],
+                "summary": "Dummy response — Gemini API key not configured."
+            }
+        }
+
+    try:
+        contents = await file.read()
+        encoded = base64.b64encode(contents).decode("utf-8")
+
+        extract_model = genai.GenerativeModel("gemini-2.5-pro-preview-03-25")
+        response = extract_model.generate_content([
+            {
+                "inline_data": {
+                    "mime_type": file.content_type,
+                    "data": encoded
+                }
+            },
+            """Extract all key concepts, formulas, definitions, and topics from this document.
+            Return ONLY valid JSON with these keys:
+            - topics: list of main topics covered
+            - formulas: list of any equations or formulas
+            - concepts: list of key definitions or ideas
+            - summary: 2-3 sentence overview of the content"""
+        ])
+
+        text = response.text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+
+        return {"concepts": json.loads(text)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini extraction failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

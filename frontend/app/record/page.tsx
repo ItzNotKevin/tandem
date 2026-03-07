@@ -3,11 +3,23 @@
 import { useState, useRef, useEffect } from "react";
 import Head from "next/head";
 
+interface ExtractedConcepts {
+  topics: string[];
+  formulas: string[];
+  concepts: string[];
+  summary: string;
+}
+
 export default function RecordPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [recordings, setRecordings] = useState<{ id: number; duration: number }[]>([]);
+  const [extractedConcepts, setExtractedConcepts] = useState<ExtractedConcepts | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -48,6 +60,36 @@ export default function RecordPage() {
     setRecordings((prev) => prev.filter((r) => r.id !== id));
   };
 
+  const handleFileUpload = async (file: File) => {
+    const allowed = ["application/pdf", "image/png", "image/jpeg"];
+    if (!allowed.includes(file.type)) {
+      setUploadError("Unsupported file type. Please upload a PDF, PNG, or JPG.");
+      return;
+    }
+
+    setUploadedFileName(file.name);
+    setIsExtracting(true);
+    setUploadError(null);
+    setExtractedConcepts(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/extract", { method: "POST", body: formData });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+      const { concepts } = await res.json();
+      const parsed: ExtractedConcepts =
+        typeof concepts === "string" ? JSON.parse(concepts) : concepts;
+      setExtractedConcepts(parsed);
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : "Extraction failed.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F6F4EE] text-[#5A5145] font-sans selection:bg-[#E3D8C3]">
       {/* Top Navigation Bar */}
@@ -74,37 +116,86 @@ export default function RecordPage() {
         <div className="flex flex-col md:flex-row gap-8 w-full max-w-5xl">
 
           {/* Left Side: File Upload */}
-          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-8 border border-[#DFD5C2] shadow-sm flex flex-col items-center justify-center min-h-[320px] transition-colors hover:bg-[#EAE4D6]">
+          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-8 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[320px]">
             <div className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-6 self-start w-full">
               ATTACHMENTS
             </div>
 
-            <label className="flex flex-col items-center justify-center w-full h-full rounded-xl border-2 border-dashed border-[#D1C6B3] bg-transparent cursor-pointer hover:bg-[#F4EFE6] transition p-6 text-center">
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <svg
-                  className="w-10 h-10 mb-4 text-[#A6977F]"
-                  aria-hidden="true"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 20 16"
-                >
-                  <path
-                    stroke="currentColor"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="1.5"
-                    d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"
-                  />
-                </svg>
-                <p className="mb-2 text-sm text-[#736859]">
-                  <span className="font-semibold">Click to upload</span> or drag and drop
-                </p>
-                <p className="text-xs text-[#A6977F]">
-                  PDF, DOCX, PNG, JPG (Max 50MB)
-                </p>
+            <label
+              className={`flex flex-col items-center justify-center w-full rounded-xl border-2 border-dashed cursor-pointer transition p-6 text-center ${isDragging ? "border-[#5A5145] bg-[#EAE4D6]" : "border-[#D1C6B3] bg-transparent hover:bg-[#F4EFE6]"}`}
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files[0];
+                if (file) handleFileUpload(file);
+              }}
+            >
+              <div className="flex flex-col items-center justify-center py-4">
+                {isExtracting ? (
+                  <>
+                    <svg className="w-8 h-8 mb-3 text-[#A6977F] animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <p className="text-sm text-[#736859]">Extracting concepts...</p>
+                    <p className="text-xs text-[#A6977F] mt-1 truncate max-w-[200px]">{uploadedFileName}</p>
+                  </>
+                ) : uploadedFileName && !uploadError ? (
+                  <>
+                    <svg className="w-8 h-8 mb-3 text-[#7A9E7E]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <p className="text-sm font-medium text-[#5A5145] truncate max-w-[200px]">{uploadedFileName}</p>
+                    <p className="text-xs text-[#A6977F] mt-1">Click to replace</p>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-10 h-10 mb-4 text-[#A6977F]" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                      <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2" />
+                    </svg>
+                    <p className="mb-2 text-sm text-[#736859]">
+                      <span className="font-semibold">Click to upload</span> or drag and drop
+                    </p>
+                    <p className="text-xs text-[#A6977F]">PDF, PNG, JPG (Max 50MB)</p>
+                  </>
+                )}
               </div>
-              <input id="dropzone-file" type="file" className="hidden" />
+              <input
+                id="dropzone-file"
+                type="file"
+                className="hidden"
+                accept=".pdf,image/png,image/jpeg"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }}
+              />
             </label>
+
+            {uploadError && (
+              <p className="mt-3 text-xs text-[#D93D3D]">{uploadError}</p>
+            )}
+
+            {extractedConcepts && (
+              <div className="mt-4 space-y-3 text-sm text-[#5A5145]">
+                <p className="italic text-[#736859]">{extractedConcepts.summary}</p>
+                {extractedConcepts.topics.length > 0 && (
+                  <div>
+                    <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-1">TOPICS</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs text-[#736859]">
+                      {extractedConcepts.topics.map((t, i) => <li key={i}>{t}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {extractedConcepts.formulas.length > 0 && (
+                  <div>
+                    <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-1">FORMULAS</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs font-mono text-[#736859]">
+                      {extractedConcepts.formulas.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right Side: Recording Interface */}
