@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { getSessionSlides, type AISlide } from '@/lib/slideshow-api'
 import BrandLogo from '@/components/BrandLogo'
 import katex from 'katex'
-import 'katex/dist/katex.min.css'
 
 const arrowStyle = (disabled: boolean): React.CSSProperties => ({
   display: 'flex',

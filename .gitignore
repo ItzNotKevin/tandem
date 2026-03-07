@@ -11,6 +11,12 @@ dist/
 .env
 .env.*
 
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
 # Misc
 .DS_Store
 *.log

@@ -369,7 +369,26 @@ Rules:
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
 
-    slides = json.loads(text)
+    # Iteratively fix unescaped LaTeX backslashes (e.g. \frac → \\frac).
+    # json.JSONDecodeError.pos is just after the bad backslash — double it and retry.
+    slides = None
+    for _ in range(100):
+        try:
+            slides = json.loads(text)
+            break
+        except json.JSONDecodeError as e:
+            if 'escape' in str(e).lower():
+                # C JSON ext: e.pos AT the backslash; Python impl: e.pos AFTER it
+                if e.pos < len(text) and text[e.pos] == '\\':
+                    text = text[:e.pos] + '\\\\' + text[e.pos + 1:]
+                elif e.pos > 0 and text[e.pos - 1] == '\\':
+                    text = text[:e.pos - 1] + '\\\\' + text[e.pos:]
+                else:
+                    raise
+            else:
+                raise
+    if slides is None:
+        raise HTTPException(status_code=500, detail="Slide generation failed: JSON parsing error")
 
     extracted_image_urls = [f"/static/images/{f}" for f in image_files]
 
