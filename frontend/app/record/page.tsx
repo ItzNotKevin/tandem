@@ -201,7 +201,7 @@ export default function RecordPage() {
             </label>
 
             {uploadedFiles.length > 0 && (
-              <div className="mt-4 flex flex-col gap-2">
+              <div className="mt-4 flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
                 {uploadedFiles.map((f, i) => (
                   <div key={i} className="flex items-center justify-between bg-[#F4EFE6] px-3 py-2 rounded-lg border border-[#D1C6B3]">
                     <div className="flex items-center gap-2 min-w-0">
@@ -268,7 +268,7 @@ export default function RecordPage() {
               </div>
 
               {recordings.length > 0 && (
-                <div className="w-full flex flex-col gap-2">
+                <div className="w-full flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
                   {recordings.map((rec, i) => (
                     <div key={rec.id} className="flex items-center justify-between bg-[#F4EFE6] px-3 py-2 rounded-lg border border-[#D1C6B3]">
                       <div className="flex items-center gap-2">
