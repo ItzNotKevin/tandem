@@ -5,10 +5,6 @@ Pillow
 pymupdf
 websockets
 python-dotenv
+python-multipart
 requests
-hon-multipart
-websockets
-requests
-Pillow
 PyPDF2
-pymupdf
