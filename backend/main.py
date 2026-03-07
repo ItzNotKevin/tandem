@@ -98,16 +98,22 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
         problem = request.questionContext or session_context["current_problem"]
         file_summaries = session_context.get("file_summaries", [])
         summaries = "\n".join([f"- {f['filename']}: {f['summary']}" for f in file_summaries if isinstance(f, dict)])
+        
+        last_analysis = session_context.get("last_analysis")
+        last_analysis_text = ""
+        if last_analysis:
+            last_analysis_text = f"\n- PREVIOUS ANALYSIS OF THIS BOARD:\n  What you saw: {last_analysis.get('feedback', 'None')}\n  What you said: {last_analysis.get('spokenResponse', 'None')}"
 
         prompt = f"""You are an AI tutor reviewing a student's handwritten whiteboard image.
 
 CONTEXT:
 - Target Problem: "{problem}"
 - Study Materials Summary:
-{summaries if summaries else '  (none uploaded)'}
+{summaries if summaries else '  (none uploaded)'}{last_analysis_text}
 
 TASK:
 Look at the whiteboard carefully. Describe what the student has written and assess their work.
+IF YOU HAVE A PREVIOUS ANALYSIS: Focus ONLY on what is **NEW, CHANGED, or ADDED** since the last time you looked. Do not re-explain the entire board or repeat your previous spoken response. Address only the student's latest step.
 1. Write in natural spoken English only. NO LaTeX, NO markdown, NO symbols like $ or \\int.
    Use words: write "integral" not "\\int", "x squared" not "x^2", "from zero to four" not "[0,4]".
 2. If the board looks blank or has very little, acknowledge that and encourage them to start.

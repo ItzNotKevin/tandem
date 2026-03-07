@@ -20,9 +20,6 @@ export default function WhiteboardPage() {
   const latestAnalysisRef = useRef<string | null>(null)
   // Ref to sendContextualUpdate so we can call it from onMessage without stale closures
   const sendUpdateRef = useRef<((text: string) => void) | null>(null)
-  // Stores observations that arrive while Artie is speaking — flushed when he stops
-  const pendingWhileSpeakingRef = useRef<string | null>(null)
-  const isSpeakingRef = useRef(false)
   // Prevents sending duplicate identical snapshots to Gemini
   const lastSnapshotRef = useRef<string | null>(null)
   
@@ -63,40 +60,34 @@ export default function WhiteboardPage() {
         const sanitizedText = message.message.replace(/\[.*?\]/g, '').trim()
         setTranscript(prev => [...prev, { role: 'agent', text: sanitizedText }])
       } else if (message.source === 'user' && message.message) {
-        setTranscript(prev => [...prev, { role: 'user', text: message.message }])
-        // Re-inject latest whiteboard state right before Artie responds
-        // This is the KEY fix: sendContextualUpdate is dropped while Artie speaks,
-        // so we re-send on every user turn to guarantee fresh whiteboard context
-        const latest = latestAnalysisRef.current
-        if (latest && sendUpdateRef.current) {
-          sendUpdateRef.current(latest)
+        const text = message.message.trim()
+        // Filter VAD noise: '...', blank, very short clips, or all-punctuation
+        // ElevenLabs emits these when it detects ambient sound but no real speech
+        const isNoise = !text || text.length <= 3 || /^[.\s\u2026!?]+$/.test(text)
+
+        // Hide noise AND internal system prompts from the visible chat transcript
+        if (!isNoise && !text.includes('[WHITEBOARD UPDATE')) {
+          setTranscript(prev => [...prev, { role: 'user', text }])
+        }
+
+        // Only re-inject whiteboard context when student actually said something real
+        if (!isNoise) {
+          const latest = latestAnalysisRef.current
+          if (latest && sendUpdateRef.current) {
+            sendUpdateRef.current(latest)
+          }
         }
       }
     },
     onError: (error) => console.error('ElevenLabs Error:', error),
   })
 
-  const { status, isSpeaking, sendContextualUpdate } = conversation
+  // We destructure sendUserMessage to forcefully interrupt Artie mid-sentence
+  const { status, isSpeaking, sendContextualUpdate, sendUserMessage } = conversation
   const isConnected = status === 'connected'
 
   // Keep sendUpdateRef in sync so onMessage can call it without stale closure
   useEffect(() => { sendUpdateRef.current = sendContextualUpdate }, [sendContextualUpdate])
-
-  // KEY: Flush pending observation the moment Artie finishes speaking
-  // This makes observations proactively trigger Artie to speak (not waiting for user input)
-  useEffect(() => {
-    const wasSpeaking = isSpeakingRef.current
-    isSpeakingRef.current = isSpeaking
-    // Artie just finished speaking (speaking → not speaking)
-    if (wasSpeaking && !isSpeaking && isConnected) {
-      const pending = pendingWhileSpeakingRef.current
-      if (pending) {
-        pendingWhileSpeakingRef.current = null
-        // Small delay for smooth conversation pacing
-        setTimeout(() => sendUpdateRef.current?.(pending), 400)
-      }
-    }
-  }, [isSpeaking, isConnected])
 
   // Proactive Context Injection: fires when BOTH connected and session data ready
   // Also flushes any pending observation that arrived before connection
@@ -125,6 +116,8 @@ TUTORING RULES — follow these strictly at all times:
 4. If they made a mistake, point out WHERE the error is and ask THEM how they'd fix it — don't fix it for them.
 5. Praise effort and partial progress genuinely.
 6. Your goal is for the student to discover the answer themselves with your guidance.
+7. SILENCE = DO NOTHING: If the student is quiet, DO NOT speak at all. Do not say "are you still there?", "take your time", "I'm right here", or any filler phrase. Say absolutely nothing until the student speaks meaningfully or a [WHITEBOARD UPDATE] arrives. Silence means they are thinking or writing.
+8. FILLER WORDS: If the student says a short filler ("mm", "uh", "okay", "yeah"), give at most one brief word of acknowledgment, then go silent.
 
 Greet the student, mention the specific problem, and ask them where they'd like to start.`
       sendContextualUpdate(fullContext)
@@ -200,14 +193,9 @@ After saying this, wait for the student to respond. Do not add extra information
       latestAnalysisRef.current = richUpdate
 
       if (isConnected) {
-        if (!isSpeaking) {
-          // Artie is listening — send immediately, he'll react proactively
-          await sendContextualUpdate(richUpdate)
-        } else {
-          // Artie is speaking — queue it, send the moment he stops
-          pendingWhileSpeakingRef.current = richUpdate
-          console.log('Artie speaking — observation queued, will deliver when he finishes.')
-        }
+        // By sending this via sendUserMessage, it simulates user text input, 
+        // which completely interrupts Artie mid-sentence and forces him to reply instantly.
+        sendUserMessage(richUpdate)
       } else {
         // Artie offline — queue for next connection
         pendingObservationRef.current = richUpdate
@@ -245,7 +233,7 @@ After saying this, wait for the student to respond. Do not add extra information
         <TldrawBoard 
           ref={boardRef} 
           onStrokeEnd={handleStrokeEnd} 
-          strokeEndDebounceMs={1500} 
+          strokeEndDebounceMs={500} 
         />
       </div>
 
@@ -277,18 +265,18 @@ After saying this, wait for the student to respond. Do not add extra information
             {transcript.map((msg, idx) => (
               <div 
                 key={idx} 
-                className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
+                className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${ 
                   msg.role === 'agent' 
-                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] ml-4' 
-                    : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] mr-4 border-dashed opacity-80'
+                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] mr-4' 
+                    : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] ml-4 border-dashed opacity-80 self-end'
                 }`}
               >
-                <div className="flex items-start gap-2">
+                <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                   <span className={`text-[10px] font-bold uppercase tracking-widest ${msg.role === 'agent' ? 'text-[#D93D3D]' : 'text-[#8B7355]'}`}>
                     {msg.role === 'agent' ? 'Artie' : 'You'}
                   </span>
                 </div>
-                <p className="text-sm mt-1 leading-relaxed">{msg.text}</p>
+                <p className={`text-sm mt-1 leading-relaxed ${msg.role === 'user' ? 'text-right' : ''}`}>{msg.text}</p>
               </div>
             ))}
 
