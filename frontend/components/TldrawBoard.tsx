@@ -1,140 +1,95 @@
 'use client'
 
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-} from 'react'
-import { Editor, Tldraw, useEditor } from 'tldraw'
-import 'tldraw/tldraw.css'
+import { Tldraw, Editor, createShapeId } from '@tldraw/tldraw'
+import '@tldraw/tldraw/tldraw.css'
+import { useCallback, useRef, forwardRef, useImperativeHandle } from 'react'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface WhiteboardSnapshot {
-  blob: Blob
-  /** data-URL (base64 PNG) ready to send to the backend */
-  base64: string
-  timestamp: number
-}
-
-/** Methods exposed to a parent via ref */
 export interface TldrawBoardHandle {
-  /** Manually trigger a snapshot of the current canvas */
-  captureSnapshot: () => Promise<WhiteboardSnapshot | null>
-  /** Direct access to the tldraw Editor instance */
-  getEditor: () => Editor | null
+  captureSnapshot: () => Promise<{ base64: string } | null>
+  pointTo: (x: number, y: number) => void
 }
 
 interface TldrawBoardProps {
-  /**
-   * Called automatically after the user stops drawing.
-   * Fires `strokeEndDebounceMs` ms after the last pen event.
-   */
-  onStrokeEnd?: (snapshot: WhiteboardSnapshot) => void
-  /** How long to wait after the last stroke before auto-capturing (default 3000 ms) */
+  onStrokeEnd?: (snapshot: { base64: string }) => void
   strokeEndDebounceMs?: number
-  className?: string
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({ 
+  onStrokeEnd, 
+  strokeEndDebounceMs = 3000 
+}, ref) => {
+  const editorRef = useRef<Editor | null>(null)
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
 
-async function captureEditorSnapshot(
-  editor: Editor
-): Promise<WhiteboardSnapshot | null> {
-  const shapeIds = [...editor.getCurrentPageShapeIds()]
-  if (shapeIds.length === 0) return null
+  const captureSnapshot = useCallback(async () => {
+    if (!editorRef.current) return null
+    
+    // We get the SVG element for the current page
+    const shapeIds = Array.from(editorRef.current.getCurrentPageShapeIds())
+    if (shapeIds.length === 0) return null
 
-  const { blob } = await editor.toImage(shapeIds, {
-    format: 'png',
-    background: true,
-  })
+    const svg = await editorRef.current.getSvgElement(shapeIds)
+    if (!svg) return null
 
-  const base64 = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
+    // Convert SVG to data URL (simplified version for now, real implementation might need canvas)
+    const svgData = new XMLSerializer().serializeToString(svg)
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    const img = new Image()
+    
+    return new Promise<{ base64: string } | null>((resolve) => {
+      img.onload = () => {
+        canvas.width = img.width
+        canvas.height = img.height
+        ctx?.drawImage(img, 0, 0)
+        const base64 = canvas.toDataURL('image/png')
+        resolve({ base64 })
+      }
+      img.onerror = () => resolve(null)
+      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)))
+    })
+  }, [])
 
-  return { blob, base64, timestamp: Date.now() }
-}
+  const pointTo = useCallback((x: number, y: number) => {
+    if (!editorRef.current) return
+    editorRef.current.updateInstanceState({ cursor: { x, y } })
+  }, [])
 
-// ─── Inner controller (needs useEditor inside Tldraw context) ─────────────────
+  useImperativeHandle(ref, () => ({
+    captureSnapshot,
+    pointTo
+  }))
 
-function StrokeListener({
-  onStrokeEnd,
-  debounceMs,
-  onReady,
-}: {
-  onStrokeEnd?: (snapshot: WhiteboardSnapshot) => void
-  debounceMs: number
-  onReady: (editor: Editor) => void
-}) {
-  const editor = useEditor()
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleMount = useCallback((editor: Editor) => {
+    editorRef.current = editor
+    
+    // Listen for changes to trigger the debounce
+    editor.on('change', () => {
+      if (!onStrokeEnd) return
+      
+      if (debounceTimer.current) clearTimeout(debounceTimer.current)
+      
+      debounceTimer.current = setTimeout(async () => {
+        const snapshot = await captureSnapshot()
+        if (snapshot) onStrokeEnd(snapshot)
+      }, strokeEndDebounceMs)
+    })
+  }, [onStrokeEnd, strokeEndDebounceMs, captureSnapshot])
 
-  // Expose the editor to the parent ref
-  useEffect(() => {
-    onReady(editor)
-  }, [editor, onReady])
-
-  // Listen for user-initiated document changes and debounce the snapshot
-  useEffect(() => {
-    if (!onStrokeEnd) return
-
-    const stop = editor.store.listen(
-      () => {
-        if (timer.current) clearTimeout(timer.current)
-        timer.current = setTimeout(async () => {
-          const snapshot = await captureEditorSnapshot(editor)
-          if (snapshot) onStrokeEnd(snapshot)
-        }, debounceMs)
-      },
-      { scope: 'document', source: 'user' }
-    )
-
-    return () => {
-      stop()
-      if (timer.current) clearTimeout(timer.current)
-    }
-  }, [editor, onStrokeEnd, debounceMs])
-
-  return null
-}
-
-// ─── Public component ─────────────────────────────────────────────────────────
-
-const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(
-  ({ onStrokeEnd, strokeEndDebounceMs = 3000, className }, ref) => {
-    const editorRef = useRef<Editor | null>(null)
-
-    useImperativeHandle(ref, () => ({
-      captureSnapshot: () => {
-        if (!editorRef.current) return Promise.resolve(null)
-        return captureEditorSnapshot(editorRef.current)
-      },
-      getEditor: () => editorRef.current,
-    }))
-
-    const handleReady = useCallback((editor: Editor) => {
-      editorRef.current = editor
-    }, [])
-
-    return (
-      <div className={className} style={{ position: 'relative', width: '100%', height: '100%' }}>
-        <Tldraw>
-          <StrokeListener
-            onStrokeEnd={onStrokeEnd}
-            debounceMs={strokeEndDebounceMs}
-            onReady={handleReady}
-          />
-        </Tldraw>
-      </div>
-    )
-  }
-)
+  return (
+    <div className="w-full h-full border border-gray-200 rounded-lg overflow-hidden shadow-inner bg-white">
+      <Tldraw 
+        onMount={handleMount} 
+        inferDarkMode={false}
+        hideUi={false}
+        components={{
+          ZoomMenu: null,
+        }}
+      />
+    </div>
+  )
+})
 
 TldrawBoard.displayName = 'TldrawBoard'
+
 export default TldrawBoard

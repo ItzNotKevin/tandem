@@ -94,17 +94,16 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
 @app.post("/problem/generate")
 async def generate_problem(request: Request):
     if not GEMINI_API_KEY:
-        return {
-            "question": "Find the derivative of f(x) = 3x^2 + 5x + 2",
-            "solution": "6x + 5",
-            "context": "Basic power rule exercise"
-        }
+        raise HTTPException(
+            status_code=500, 
+            detail="GEMINI_API_KEY is not configured in backend environment."
+        )
 
     try:
         body = await request.json()
         context = body.get("context", "Calculus")
         
-        prompt = f"Generate a challenging but solvable {context} problem for a student. Return JSON: {{'question': '...', 'solution': '...', 'context': '...'}}"
+        prompt = f"Generate a challenging but solvable {context} problem for a student. Return ONLY JSON: {{'question': '...', 'solution': '...', 'context': '...'}}"
         
         response = model.generate_content(prompt)
         text_response = response.text.strip()
