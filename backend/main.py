@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import os, base64, json, asyncio, uuid, requests as req_lib
 import websockets as ws_lib
 from dotenv import load_dotenv
@@ -158,13 +158,15 @@ async def get_content():
 
 @app.post("/generate-lesson")
 async def generate_lesson(
-    file: UploadFile = File(None),
+    files: List[UploadFile] = File(default=[]),
     transcript: str = Form(""),
 ):
-    extracted_text = ""
+    all_text_parts = []
     image_files = []
 
-    if file and file.filename:
+    for file in files:
+        if not file.filename:
+            continue
         contents = await file.read()
 
         # Extract text
@@ -173,7 +175,7 @@ async def generate_lesson(
             file_part,
             "Extract all text from this document exactly as it appears. Return only raw text."
         ])
-        extracted_text = text_response.text.strip()
+        all_text_parts.append(text_response.text.strip())
 
         # Extract images
         if file.content_type == "application/pdf":
@@ -196,6 +198,8 @@ async def generate_lesson(
             with open(os.path.join(IMAGES_DIR, filename), "wb") as f:
                 f.write(contents)
             image_files.append(filename)
+
+    extracted_text = "\n\n".join(all_text_parts)
 
     session_content["extracted_text"] = extracted_text
     session_content["transcript"] = transcript
