@@ -4,3 +4,7 @@ google-cloud-aiplatform
 python-dotenv
 python-multipart
 websockets
+requests
+Pillow
+PyPDF2
+pymupdf

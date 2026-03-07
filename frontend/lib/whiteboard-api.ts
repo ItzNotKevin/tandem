@@ -1,56 +1,28 @@
-/**
- * whiteboard-api.ts
- *
- * Utility for sending tldraw canvas snapshots to the backend for AI analysis.
- * The backend (FastAPI) will forward the image to the VLM and return feedback.
- */
+import axios from 'axios'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
-export interface SnapshotPayload {
-  /** Base64-encoded PNG data URL of the canvas */
-  imageBase64: string
-  /** The question the student is currently answering */
-  questionContext: string
-  timestamp: number
-}
-
-export interface FeedbackResponse {
+export interface AnalysisResponse {
   hasMistake: boolean
-  /** Human-readable feedback to pass to ElevenLabs for voice delivery */
-  feedback: string | null
-  /** Optional hint about where on the board the mistake is */
-  mistakeDescription: string | null
+  feedback: string
+  mistakeDescription: string
+  coordinates?: { x: number; y: number }
 }
 
-// ─── API call ─────────────────────────────────────────────────────────────────
-
-/**
- * Sends a whiteboard snapshot to the Next.js API route, which proxies it to
- * the FastAPI backend for VLM analysis.
- *
- * @param imageBase64 - data-URL string from `WhiteboardSnapshot.base64`
- * @param questionContext - the current practice question text
- */
-export async function analyzeWhiteboard(
-  imageBase64: string,
-  questionContext: string
-): Promise<FeedbackResponse> {
-  const payload: SnapshotPayload = {
-    imageBase64,
-    questionContext,
-    timestamp: Date.now(),
+export async function analyzeWhiteboard(imageBase64: string, questionContext: string): Promise<AnalysisResponse> {
+  try {
+    const response = await axios.post(`${API_URL}/whiteboard/analyze`, {
+      imageBase64,
+      questionContext,
+      timestamp: Date.now()
+    })
+    return response.data
+  } catch (error) {
+    console.error('Error analyzing whiteboard:', error)
+    return {
+      hasMistake: false,
+      feedback: 'Could not reach the analysis server. Please try again.',
+      mistakeDescription: 'Connection error'
+    }
   }
-
-  const res = await fetch('/api/whiteboard/analyze', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-
-  if (!res.ok) {
-    throw new Error(`Whiteboard analysis request failed: ${res.status}`)
-  }
-
-  return res.json() as Promise<FeedbackResponse>
 }
