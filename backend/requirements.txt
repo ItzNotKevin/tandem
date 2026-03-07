@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-google-generativeai
+google-cloud-aiplatform
 python-dotenv
 python-multipart
+websockets

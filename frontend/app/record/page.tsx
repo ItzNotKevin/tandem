@@ -1,25 +1,26 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import Head from "next/head";
 
-interface ExtractedConcepts {
-  topics: string[];
-  formulas: string[];
-  concepts: string[];
-  summary: string;
-}
+const BACKEND_WS = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000").replace(/^http/, "ws");
 
 export default function RecordPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [recordings, setRecordings] = useState<{ id: number; duration: number }[]>([]);
-  const [extractedConcepts, setExtractedConcepts] = useState<ExtractedConcepts | null>(null);
+  const [recordings, setRecordings] = useState<{ id: number; duration: number; transcript: string }[]>([]);
+  const [extractedText, setExtractedText] = useState<string | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [partialTranscript, setPartialTranscript] = useState("");
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const transcriptRef = useRef("");
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -37,23 +38,80 @@ export default function RecordPage() {
     return () => clearInterval(interval);
   }, [isRecording, isPaused]);
 
-  const handleStartRecording = () => {
+  const handleStartRecording = async () => {
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      alert("Microphone access denied.");
+      return;
+    }
+
     setIsRecording(true);
     setIsPaused(false);
     setRecordingTime(0);
+    setTranscript("");
+    setPartialTranscript("");
+    transcriptRef.current = "";
+
+    audioChunksRef.current = [];
+    const recorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = recorder;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunksRef.current.push(e.data);
+    };
+
+    recorder.start(1000);
   };
 
   const handlePauseToggle = () => {
+    if (!mediaRecorderRef.current) return;
+    if (isPaused) {
+      mediaRecorderRef.current.resume();
+    } else {
+      mediaRecorderRef.current.pause();
+    }
     setIsPaused(!isPaused);
   };
 
   const handleStopRecording = () => {
+    if (!mediaRecorderRef.current) return;
+
+    mediaRecorderRef.current.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      audioChunksRef.current = [];
+
+      setIsTranscribing(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", audioBlob, "recording.webm");
+        const res = await fetch("/api/transcribe", { method: "POST", body: formData });
+        if (res.ok) {
+          const { text } = await res.json();
+          transcriptRef.current = text;
+          setTranscript(text);
+        }
+      } catch (err) {
+        console.error("Transcription failed:", err);
+      } finally {
+        setIsTranscribing(false);
+      }
+    };
+
+    mediaRecorderRef.current.stop();
+    mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+
     if (recordingTime > 0) {
-      setRecordings((prev) => [...prev, { id: Date.now(), duration: recordingTime }]);
+      setRecordings((prev) => [
+        ...prev,
+        { id: Date.now(), duration: recordingTime, transcript: transcriptRef.current },
+      ]);
     }
     setIsRecording(false);
     setIsPaused(false);
     setRecordingTime(0);
+    setPartialTranscript("");
   };
 
   const handleDeleteRecording = (id: number) => {
@@ -70,7 +128,7 @@ export default function RecordPage() {
     setUploadedFileName(file.name);
     setIsExtracting(true);
     setUploadError(null);
-    setExtractedConcepts(null);
+    setExtractedText(null);
 
     try {
       const formData = new FormData();
@@ -79,12 +137,11 @@ export default function RecordPage() {
       const res = await fetch("/api/extract", { method: "POST", body: formData });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
 
-      const { concepts } = await res.json();
-      const parsed: ExtractedConcepts =
-        typeof concepts === "string" ? JSON.parse(concepts) : concepts;
-      setExtractedConcepts(parsed);
+      const { text } = await res.json();
+      setExtractedText(text);
     } catch (err: unknown) {
       setUploadError(err instanceof Error ? err.message : "Extraction failed.");
+      setExtractedText(null);
     } finally {
       setIsExtracting(false);
     }
@@ -175,25 +232,12 @@ export default function RecordPage() {
               <p className="mt-3 text-xs text-[#D93D3D]">{uploadError}</p>
             )}
 
-            {extractedConcepts && (
-              <div className="mt-4 space-y-3 text-sm text-[#5A5145]">
-                <p className="italic text-[#736859]">{extractedConcepts.summary}</p>
-                {extractedConcepts.topics.length > 0 && (
-                  <div>
-                    <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-1">TOPICS</p>
-                    <ul className="list-disc list-inside space-y-0.5 text-xs text-[#736859]">
-                      {extractedConcepts.topics.map((t, i) => <li key={i}>{t}</li>)}
-                    </ul>
-                  </div>
-                )}
-                {extractedConcepts.formulas.length > 0 && (
-                  <div>
-                    <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-1">FORMULAS</p>
-                    <ul className="list-disc list-inside space-y-0.5 text-xs font-mono text-[#736859]">
-                      {extractedConcepts.formulas.map((f, i) => <li key={i}>{f}</li>)}
-                    </ul>
-                  </div>
-                )}
+            {extractedText && (
+              <div className="mt-4">
+                <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-2">EXTRACTED TEXT</p>
+                <div className="max-h-48 overflow-y-auto text-xs text-[#736859] whitespace-pre-wrap leading-relaxed">
+                  {extractedText}
+                </div>
               </div>
             )}
           </div>
@@ -280,42 +324,29 @@ export default function RecordPage() {
                 )}
               </div>
 
-              {/* Saved Recordings List */}
-              {recordings.length > 0 && !isRecording && (
-                <div className="w-full mt-4 flex flex-col gap-3">
-                  <div className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-2 text-center border-b border-[#D1C6B3] pb-2">
-                    SAVED RECORDINGS
+              {/* Transcript */}
+              {(isTranscribing || transcript) && (
+                <div className="w-full">
+                  <p className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-2">TRANSCRIPT</p>
+                  <div className="max-h-36 overflow-y-auto text-xs text-[#736859] leading-relaxed bg-[#F4EFE6] rounded-xl p-3 border border-[#D1C6B3]">
+                    {isTranscribing ? (
+                      <span className="text-[#A6977F] italic animate-pulse">Transcribing...</span>
+                    ) : (
+                      <span>{transcript}</span>
+                    )}
                   </div>
-                  {recordings.map((rec, index) => (
-                    <div key={rec.id} className="flex justify-between items-center bg-[#F4EFE6] px-4 py-3 rounded-xl border border-[#D1C6B3]">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-[#EADDD9] text-[#D93D3D] flex items-center justify-center">
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
-                        </div>
-                        <div className="flex flex-col text-left">
-                          <span className="text-sm font-medium text-[#5A5145]">Recording {index + 1}</span>
-                          <span className="text-xs text-[#A6977F] font-mono">{formatTime(rec.duration)}</span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteRecording(rec.id)}
-                        className="text-[#A6977F] hover:text-[#D93D3D] transition-colors p-2"
-                        title="Delete recording"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
                 </div>
               )}
             </div>
           </div>
         </div>
 
+        {/* Generate Lesson Button */}
+        <div className="mt-12 w-full max-w-5xl flex justify-center">
+          <button className="px-10 py-4 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-all shadow-md font-semibold tracking-wider text-sm hover:-translate-y-0.5" onClick={() => console.log('Generate Lesson clicked')}>
+            GENERATE LESSON
+          </button>
+        </div>
 
       </main>
     </div>
