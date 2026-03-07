@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import os, base64, json, asyncio, uuid, requests as req_lib
 import websockets as ws_lib
 from dotenv import load_dotenv
@@ -160,6 +160,57 @@ async def generate_problem(request: Request):
     except Exception as e:
         return {"error": str(e)}
 
+class SlideshowGenerateRequest(BaseModel):
+    prompt: str
+    num_slides: int = 8
+
+@app.post("/slideshow/generate")
+async def generate_slideshow(request: SlideshowGenerateRequest):
+    try:
+        prompt = f"""
+        Generate a {request.num_slides}-slide educational slideshow about: "{request.prompt}"
+
+        Return ONLY a JSON array of slide objects. Each slide must follow this exact schema:
+        {{
+            "title": "Short slide title",
+            "subtitle": "One-line description",
+            "keywords": ["Keyword 1", "Keyword 2", "Keyword 3"],
+            "theorem": {{
+                "label": "Theorem",
+                "formula": "The key formula or rule for this concept (use plain Unicode math, e.g. f′(x) = lim)"
+            }},
+            "diagram_svg": "<svg viewBox='0 0 320 220'>...</svg>"
+        }}
+
+        For diagram_svg, generate a clean, minimal inline SVG illustration using ONLY these colors:
+        - Background fill: #f5ede0
+        - Axes / grid lines: #c9b99a, stroke-width 1.5
+        - Curves / main shapes: #8b7355, stroke-width 2.5, fill none
+        - Accent / highlight: #c17f3a
+        - Text: fill #6b5a3e, font-family Georgia serif, italic where appropriate
+        Use SVG text, path, rect, circle, line, polygon elements. Keep diagrams simple and educational.
+
+        Return ONLY the raw JSON array, no markdown, no backticks.
+        """
+
+        response = model.generate_content(prompt)
+        text_response = response.text.strip()
+        if "```json" in text_response:
+            text_response = text_response.split("```json")[1].split("```")[0].strip()
+        elif "```" in text_response:
+            text_response = text_response.split("```")[1].split("```")[0].strip()
+
+        slides = json.loads(text_response)
+        session_context["slideshow"] = slides
+        return slides
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/slideshow/slides")
+async def get_slideshow():
+    return session_context.get("slideshow", [])
+
 
 @app.post("/session/upload")
 async def upload_material(file: UploadFile = File(...)):
@@ -221,13 +272,15 @@ async def get_content():
 
 @app.post("/generate-lesson")
 async def generate_lesson(
-    file: UploadFile = File(None),
+    files: List[UploadFile] = File(default=[]),
     transcript: str = Form(""),
 ):
-    extracted_text = ""
+    all_text_parts = []
     image_files = []
 
-    if file and file.filename:
+    for file in files:
+        if not file.filename:
+            continue
         contents = await file.read()
 
         # Extract text
@@ -235,7 +288,7 @@ async def generate_lesson(
             {"mime_type": file.content_type, "data": contents},
             "Extract all text from this document exactly as it appears. Return only raw text."
         ])
-        extracted_text = text_response.text.strip()
+        all_text_parts.append(text_response.text.strip())
 
         # Extract images
         if file.content_type == "application/pdf":
@@ -258,6 +311,8 @@ async def generate_lesson(
             with open(os.path.join(IMAGES_DIR, filename), "wb") as f:
                 f.write(contents)
             image_files.append(filename)
+
+    extracted_text = "\n\n".join(all_text_parts)
 
     session_content["extracted_text"] = extracted_text
     session_content["transcript"] = transcript
