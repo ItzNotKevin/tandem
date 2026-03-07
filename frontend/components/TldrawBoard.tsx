@@ -52,9 +52,10 @@ const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({
     })
   }, [])
 
-  const pointTo = useCallback((x: number, y: number) => {
-    if (!editorRef.current) return
-    editorRef.current.updateInstanceState({ cursor: { x, y } })
+  // pointTo: disabled — this tldraw version's cursor schema doesn't support x/y coords
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const pointTo = useCallback((_x: number, _y: number) => {
+    // no-op: would crash with "Unexpected property" on cursor.x in this tldraw build
   }, [])
 
   useImperativeHandle(ref, () => ({

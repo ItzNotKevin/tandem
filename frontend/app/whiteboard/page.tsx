@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
-import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, Volume2 } from 'lucide-react'
+import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff } from 'lucide-react'
 import { useConversation } from '@elevenlabs/react'
 
 export default function WhiteboardPage() {
@@ -14,6 +14,15 @@ export default function WhiteboardPage() {
   const [currentQuestion, setCurrentQuestion] = useState("What are we working on today?")
   const [sessionData, setSessionData] = useState<any>(null)
   const sessionRef = useRef<any>(null)
+  // Queue: stores whiteboard analysis if Artie wasn't connected when it arrived
+  const pendingObservationRef = useRef<string | null>(null)
+  // Always holds the most recent analysis so we can re-inject when the student speaks
+  const latestAnalysisRef = useRef<string | null>(null)
+  // Ref to sendContextualUpdate so we can call it from onMessage without stale closures
+  const sendUpdateRef = useRef<((text: string) => void) | null>(null)
+  // Stores observations that arrive while Artie is speaking — flushed when he stops
+  const pendingWhileSpeakingRef = useRef<string | null>(null)
+  const isSpeakingRef = useRef(false)
   
   // Fetch session context on mount
   useEffect(() => {
@@ -49,11 +58,17 @@ export default function WhiteboardPage() {
     onMessage: (message) => {
       console.log('Received message:', message)
       if (message.source === 'ai' && message.message) {
-        // Sanitize: Remove bracketed expressions like [happy], [neutral], etc.
         const sanitizedText = message.message.replace(/\[.*?\]/g, '').trim()
         setTranscript(prev => [...prev, { role: 'agent', text: sanitizedText }])
       } else if (message.source === 'user' && message.message) {
         setTranscript(prev => [...prev, { role: 'user', text: message.message }])
+        // Re-inject latest whiteboard state right before Artie responds
+        // This is the KEY fix: sendContextualUpdate is dropped while Artie speaks,
+        // so we re-send on every user turn to guarantee fresh whiteboard context
+        const latest = latestAnalysisRef.current
+        if (latest && sendUpdateRef.current) {
+          sendUpdateRef.current(latest)
+        }
       }
     },
     onError: (error) => console.error('ElevenLabs Error:', error),
@@ -62,16 +77,56 @@ export default function WhiteboardPage() {
   const { status, isSpeaking, sendContextualUpdate } = conversation
   const isConnected = status === 'connected'
 
-  // Proactive Context Injection: Trigger when BOTH connected and data ready
+  // Keep sendUpdateRef in sync so onMessage can call it without stale closure
+  useEffect(() => { sendUpdateRef.current = sendContextualUpdate }, [sendContextualUpdate])
+
+  // KEY: Flush pending observation the moment Artie finishes speaking
+  // This makes observations proactively trigger Artie to speak (not waiting for user input)
   useEffect(() => {
-    if (isConnected && sessionData) {
-      const fileContext = sessionData.file_summaries.map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
-      const fullContext = `Context: The student is working on the problem: "${sessionData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
-      
-      console.log('Proactively sending context to Artie:', fullContext)
+    const wasSpeaking = isSpeakingRef.current
+    isSpeakingRef.current = isSpeaking
+    // Artie just finished speaking (speaking → not speaking)
+    if (wasSpeaking && !isSpeaking && isConnected) {
+      const pending = pendingWhileSpeakingRef.current
+      if (pending) {
+        pendingWhileSpeakingRef.current = null
+        // Small delay for smooth conversation pacing
+        setTimeout(() => sendUpdateRef.current?.(pending), 400)
+      }
+    }
+  }, [isSpeaking, isConnected])
+
+  // Proactive Context Injection: fires when BOTH connected and session data ready
+  // Also flushes any pending observation that arrived before connection
+  useEffect(() => {
+    if (!isConnected) return
+    if (sessionData) {
+      const fileContext = sessionData.file_summaries
+        .map((f: any) => `  • ${f.filename}: ${f.summary}`)
+        .join('\n')
+      const fullContext = `CONTEXT UPDATE — read carefully and do not hallucinate:
+
+PROBLEM THE STUDENT IS SOLVING: "${sessionData.current_problem}"
+
+UPLOADED STUDY MATERIALS (background reference only — this is NOT the whiteboard):
+${fileContext || '  (none uploaded)'}
+
+WHITEBOARD STATUS: The whiteboard is currently BLANK. The student has not written anything yet.
+- Do NOT describe any whiteboard content until you receive a [WHITEBOARD UPDATE] message.
+- When you receive [WHITEBOARD UPDATE], immediately comment on what the student wrote.
+- DO NOT invent or assume any whiteboard content from the study materials.
+
+Greet the student and mention the specific problem they are solving. Ask how you can help them get started.`
       sendContextualUpdate(fullContext)
     }
-  }, [isConnected, sessionData, sendContextualUpdate])
+    // Flush any observation that was queued while Artie was offline
+    const pending = pendingObservationRef.current
+    if (pending) {
+      pendingObservationRef.current = null
+      // Small delay so greeting fires first
+      setTimeout(() => sendContextualUpdate(pending), 1500)
+    }
+  }, [isConnected]) // eslint-disable-line react-hooks/exhaustive-deps
   
   const toggleVoice = useCallback(async () => {
     if (isConnected) {
@@ -84,6 +139,14 @@ export default function WhiteboardPage() {
           alert('ElevenLabs Agent ID not found in environment variables.')
           return
         }
+
+        // Build context so the isConnected useEffect can inject it after connection
+        // (overrides are not supported on this ElevenLabs plan — they crash LiveKit)
+        const currentData = sessionRef.current
+        const problem = currentData?.current_problem || currentQuestion
+
+        // Store problem in ref so the onConnect useEffect can pick it up
+        sessionRef.current = { ...(sessionRef.current || {}), _pendingGreeting: problem }
 
         await conversation.startSession({
           agentId: agentId,
@@ -101,11 +164,38 @@ export default function WhiteboardPage() {
     try {
       const result = await analyzeWhiteboard(snapshot.base64, currentQuestion)
       setFeedback(result)
-      
-      // Voice-Vision Handshake: Send background info to the voice agent
+
+      // Build a rich, structured update — identical info to what the Observation card shows
+      // This gives Artie the same whiteboard comprehension as the vision analysis panel
+      const status = result.hasMistake ? '⚠️ MISTAKE DETECTED' : '✅ ON TRACK'
+      const richUpdate = `[WHITEBOARD UPDATE — AI VISION ANALYSIS]
+STATUS: ${status}
+WHAT THE STUDENT WROTE: Based on the whiteboard image just captured.
+VISUAL FEEDBACK: ${result.feedback}
+${result.hasMistake ? `TECHNICAL ERROR DETAIL: ${result.mistakeDescription}` : 'TECHNICAL DETAIL: Work appears correct so far.'}
+
+Your task: Respond naturally to this update. Comment specifically on what you see. ${
+        result.hasMistake
+          ? 'Gently point out the error and guide the student toward the correct approach without giving the answer.'
+          : 'Encourage the student and prompt them to continue to the next step.'
+      }`
+
+      // Always store the latest analysis — re-injected every time the student speaks
+      latestAnalysisRef.current = richUpdate
+
       if (isConnected) {
-        const visionContext = `Whiteboard Update: ${result.feedback}. ${result.hasMistake ? 'The student made a mistake.' : 'The student is on the right track.'}`
-        await sendContextualUpdate(visionContext)
+        if (!isSpeaking) {
+          // Artie is listening — send immediately, he'll react proactively
+          await sendContextualUpdate(richUpdate)
+        } else {
+          // Artie is speaking — queue it, send the moment he stops
+          pendingWhileSpeakingRef.current = richUpdate
+          console.log('Artie speaking — observation queued, will deliver when he finishes.')
+        }
+      } else {
+        // Artie offline — queue for next connection
+        pendingObservationRef.current = richUpdate
+        console.log('Artie offline — observation queued for next connection.')
       }
 
       if (result.coordinates) {
@@ -141,48 +231,6 @@ export default function WhiteboardPage() {
           onStrokeEnd={handleStrokeEnd} 
           strokeEndDebounceMs={3000} 
         />
-
-        {/* Voice Toggle Button - Bottom Right */}
-        <div className="absolute bottom-8 right-8 z-50">
-          <button 
-            onClick={toggleVoice}
-            disabled={status === 'connecting'}
-            className={`group relative p-4 rounded-full transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-[0_5px_25px_-5px_rgba(217,61,61,0.4)] ${
-              isConnected 
-                ? 'bg-[#D93D3D]' 
-                : status === 'connecting'
-                  ? 'bg-[#D4C4A8] cursor-not-allowed'
-                  : 'bg-[#FAF6EF] border border-[#E0D5C5] hover:border-[#D93D3D]'
-            }`}
-          >
-            {/* Subtle Inner Glow for Matte Effect */}
-            <div className={`absolute inset-0 rounded-full transition-opacity duration-300 ${
-              isConnected ? 'opacity-20 bg-gradient-to-tr from-black/20 to-white/20' : 'opacity-0'
-            }`} />
-
-            <div className={`relative z-10 transition-colors duration-300 ${
-              isConnected ? 'text-white' : 'text-[#D93D3D]'
-            }`}>
-              {status === 'connecting' ? (
-                <Loader2 className="w-6 h-6 animate-spin" />
-              ) : isConnected ? (
-                <Mic className={`w-6 h-6 ${isSpeaking ? 'animate-bounce' : 'animate-pulse'}`} />
-              ) : (
-                <MicOff className="w-6 h-6" />
-              )}
-            </div>
-            
-            {/* Ping animation when active */}
-            {isConnected && (
-              <div className={`absolute inset-0 rounded-full bg-[#D93D3D] opacity-20 ${isSpeaking ? 'animate-[ping_1.5s_linear_infinite]' : 'animate-ping'}`} />
-            )}
-
-            {/* Tooltip */}
-            <div className="absolute bottom-full right-0 mb-6 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0 pointer-events-none whitespace-nowrap bg-[#3D2F1E] text-white text-[10px] font-bold py-1.5 px-3 rounded-lg uppercase tracking-widest shadow-xl">
-              {status === 'connecting' ? 'Connecting...' : isConnected ? 'Stop Session' : 'Start Tutor Conversation'}
-            </div>
-          </button>
-        </div>
       </div>
 
       {/* Right Sidebar */}
@@ -200,7 +248,7 @@ export default function WhiteboardPage() {
         {/* AI Description & Responses */}
         <div className="flex-1 flex flex-col p-6 overflow-hidden">
           <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em] mb-4">Tutor Interaction</h2>
-          <div className="flex-1 overflow-y-auto space-y-6 pr-2 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar mb-4">
             {transcript.length === 0 && !feedback && (
               <div className="bg-white p-5 rounded-2xl border border-[#E0D5C5] shadow-sm italic text-center">
                 <p className="text-sm text-[#8B7355] leading-relaxed">
@@ -245,35 +293,79 @@ export default function WhiteboardPage() {
                 </div>
               </div>
             )}
-
-            {isConnected && (
-              <div className={`p-5 rounded-2xl border transition-all duration-300 shadow-md ${
-                isSpeaking 
-                  ? 'bg-white border-[#D93D3D]' 
-                  : 'bg-[#FAF6EF] border-[#E0D5C5] opacity-70'
-              }`}>
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <Volume2 className={`w-5 h-5 ${isSpeaking ? 'text-[#D93D3D] animate-pulse' : 'text-[#8B7355]'}`} />
-                    {isSpeaking && (
-                      <div className="absolute -top-1 -right-1 flex gap-0.5">
-                        <div className="w-0.5 h-2 bg-[#D93D3D] animate-[bounce_0.6s_infinite]" />
-                        <div className="w-0.5 h-3 bg-[#D93D3D] animate-[bounce_0.8s_infinite]" />
-                        <div className="w-0.5 h-2 bg-[#D93D3D] animate-[bounce_0.7s_infinite]" />
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isSpeaking ? 'text-[#D93D3D]' : 'text-[#8B7355]'}`}>
-                      {isSpeaking ? 'Artie Is Speaking' : 'Artie Is Listening'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
+
+          {/* Unified Artie Panel — replaces floating mic button */}
+          <button
+            onClick={toggleVoice}
+            disabled={status === 'connecting'}
+            className={`w-full rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${
+              isConnected
+                ? isSpeaking
+                  ? 'bg-[#D93D3D] border-[#D93D3D]'
+                  : 'bg-white border-[#D93D3D]'
+                : status === 'connecting'
+                  ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
+                  : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
+            }`}
+          >
+            <div className="flex items-center gap-4 p-4">
+              {/* Icon */}
+              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
+              }`}>
+                {status === 'connecting' ? (
+                  <Loader2 className="w-5 h-5 text-[#8B7355] animate-spin" />
+                ) : isConnected ? (
+                  <Mic className={`w-5 h-5 ${isSpeaking ? 'text-white animate-pulse' : 'text-[#D93D3D]'}`} />
+                ) : (
+                  <MicOff className="w-5 h-5 text-[#D93D3D]" />
+                )}
+                {/* Ping ring when speaking */}
+                {isSpeaking && (
+                  <span className="absolute inset-0 rounded-full bg-white/30 animate-ping" />
+                )}
+              </div>
+
+              {/* Text */}
+              <div className="text-left">
+                <p className={`text-[10px] font-black uppercase tracking-widest ${
+                  isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8B7355]'
+                }`}>
+                  {status === 'connecting' ? 'Connecting...'
+                    : isConnected
+                      ? (isSpeaking ? 'Artie is Speaking' : 'Artie is Listening')
+                      : 'Start Tutor Conversation'}
+                </p>
+                <p className={`text-xs mt-0.5 ${
+                  isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8B7355]') : 'text-[#A08060]'
+                }`}>
+                  {status === 'connecting' ? 'Please wait...'
+                    : isConnected
+                      ? 'Click to end session'
+                      : 'Click to begin with Artie'}
+                </p>
+              </div>
+
+              {/* Sound bars (when speaking) */}
+              {isSpeaking && (
+                <div className="ml-auto flex items-end gap-0.5 h-5">
+                  <div className="w-1 h-2 bg-white/80 rounded-full animate-[bounce_0.6s_infinite]" />
+                  <div className="w-1 h-4 bg-white/80 rounded-full animate-[bounce_0.8s_infinite]" />
+                  <div className="w-1 h-3 bg-white/80 rounded-full animate-[bounce_0.7s_infinite]" />
+                  <div className="w-1 h-5 bg-white/80 rounded-full animate-[bounce_0.9s_infinite]" />
+                </div>
+              )}
+
+              {/* Arrow hint (when idle) */}
+              {!isConnected && status !== 'connecting' && (
+                <div className="ml-auto text-[#D93D3D] opacity-40">›</div>
+              )}
+            </div>
+          </button>
         </div>
       </div>
     </div>
   )
 }
+
