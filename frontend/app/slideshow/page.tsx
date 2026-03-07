@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSessionSlides, type AISlide } from '@/lib/slideshow-api'
+import BrandLogo from '@/components/BrandLogo'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
@@ -213,9 +214,7 @@ export default function SlideshowPage() {
 
       {/* Header */}
       <header className="flex items-center justify-between px-12 py-5 border-b" style={{ borderColor: '#e0d5c5' }}>
-        <span className="text-sm tracking-widest uppercase" style={{ color: '#a08060', fontFamily: 'sans-serif', letterSpacing: '0.15em' }}>
-          Cursor for Calculus
-        </span>
+        <BrandLogo className="w-40" />
         <div className="flex items-center gap-4">
           {aiSlides && (
             <span className="text-xs" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>AI-generated</span>
@@ -388,7 +387,9 @@ export default function SlideshowPage() {
         </button>
 
         {/* Dots — sliding window */}
-        <div style={{ width: '72px', overflow: 'hidden' }}>
+        <div className="flex items-center gap-3">
+          <BrandLogo variant="mark" className="w-6 h-6 opacity-80" />
+          <div style={{ width: '72px', overflow: 'hidden' }}>
           <div
             style={{
               display: 'flex',
@@ -415,6 +416,7 @@ export default function SlideshowPage() {
               />
             ))}
           </div>
+        </div>
         </div>
 
         {/* Proceed to Problems */}

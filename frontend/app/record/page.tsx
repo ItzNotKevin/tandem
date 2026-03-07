@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function RecordPage() {
   const router = useRouter();
@@ -149,7 +150,9 @@ export default function RecordPage() {
               <div className="absolute inset-0 rounded-full border-2 border-[#D1C6B3] animate-ping opacity-30" />
               <div className="absolute inset-2 rounded-full border-2 border-[#A6977F] animate-ping opacity-50" style={{ animationDelay: "0.3s" }} />
               <div className="absolute inset-4 rounded-full border-2 border-[#5A5145] animate-ping opacity-70" style={{ animationDelay: "0.6s" }} />
-              <div className="absolute inset-6 rounded-full bg-[#5A5145]" />
+              <div className="absolute inset-5 flex items-center justify-center">
+                <BrandLogo variant="mark" className="w-10 h-10" />
+              </div>
             </div>
             <div className="text-center space-y-2">
               <h2 className="text-3xl font-medium tracking-tight text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
@@ -167,6 +170,7 @@ export default function RecordPage() {
       )}
 
       <header className="flex justify-between items-center px-8 py-4 text-xs font-semibold tracking-[0.15em] text-[#A6977F]">
+        <BrandLogo className="w-36" />
         <div>RECORDING STUDIO</div>
       </header>
 

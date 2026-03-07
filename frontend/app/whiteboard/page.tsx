@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
+import BrandLogo from '@/components/BrandLogo'
 import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff } from 'lucide-react'
 import { useConversation } from '@elevenlabs/react'
 
@@ -215,9 +216,10 @@ After saying this, wait for the student to respond. Do not add extra information
       {/* Main Whiteboard Area */}
       <div className="flex-1 relative flex flex-col">
         {/* Brand Header */}
-        <div className="absolute top-6 left-8 z-20">
+        <div className="absolute top-6 left-8 z-20 flex items-center gap-2">
+          <BrandLogo variant="mark" className="w-6 h-6 opacity-70" />
           <span className="text-[10px] font-black text-[#A08060] uppercase tracking-[0.3em] opacity-40">
-            Artie's Whiteboard
+            Whiteboard
           </span>
         </div>
         {/* Status Indicator */}
@@ -239,6 +241,10 @@ After saying this, wait for the student to respond. Do not add extra information
 
       {/* Right Sidebar */}
       <div className="w-[350px] border-l border-[#E0D5C5] flex flex-col bg-[#F6F4EE]">
+        <div className="px-6 pt-5 pb-4 border-b border-[#E0D5C5] bg-[#FAF6EF]">
+          <BrandLogo className="w-32" />
+        </div>
+
         {/* Question Box */}
         <div className="p-6 bg-[#FAF6EF] border-b border-[#E0D5C5]">
           <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em] mb-4">Current Problem</h2>

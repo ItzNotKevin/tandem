@@ -1,5 +1,6 @@
 import Link from "next/link";
 import styles from "./landing.module.css";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function LandingPage() {
   return (
@@ -8,6 +9,8 @@ export default function LandingPage() {
       <div className={styles.blobBottomRight} />
 
       <main className={styles.main}>
+        <BrandLogo className={styles.logo} />
+
         <p className={styles.kicker}>AI Lecture Companion</p>
 
         <h1 className={styles.title}>
