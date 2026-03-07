@@ -101,15 +101,21 @@ export default function WhiteboardPage() {
   }
 
   return (
-    <div className="flex w-screen h-screen bg-white overflow-hidden font-sans">
+    <div className="flex w-screen h-screen bg-[#FAF6EF] overflow-hidden font-serif">
       {/* Main Whiteboard Area */}
       <div className="flex-1 relative flex flex-col">
+        {/* Brand Header */}
+        <div className="absolute top-6 left-8 z-20">
+          <span className="text-[10px] font-black text-[#A08060] uppercase tracking-[0.3em] opacity-40">
+            Artie's Whiteboard
+          </span>
+        </div>
         {/* Status Indicator */}
         <div className="absolute top-4 left-4 z-10 pointer-events-none">
           {isAnalyzing && (
-            <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-100 shadow-sm animate-pulse">
-              <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-              <span className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter">Thinking</span>
+            <div className="flex items-center gap-2 bg-[#FAF6EF]/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-[#E0D5C5] shadow-sm animate-pulse">
+              <Loader2 className="w-3.5 h-3.5 text-[#D93D3D] animate-spin" />
+              <span className="text-[10px] font-bold text-[#8B7355] uppercase tracking-widest">Thinking</span>
             </div>
           )}
         </div>
@@ -125,12 +131,12 @@ export default function WhiteboardPage() {
           <button 
             onClick={toggleVoice}
             disabled={status === 'connecting'}
-            className={`group relative p-4 rounded-full transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-[0_5px_25px_-5px_rgba(239,68,68,0.4)] ${
+            className={`group relative p-4 rounded-full transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-[0_5px_25px_-5px_rgba(217,61,61,0.4)] ${
               isConnected 
-                ? 'bg-red-500' 
+                ? 'bg-[#D93D3D]' 
                 : status === 'connecting'
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-white border border-gray-100 hover:border-red-200'
+                  ? 'bg-[#D4C4A8] cursor-not-allowed'
+                  : 'bg-[#FAF6EF] border border-[#E0D5C5] hover:border-[#D93D3D]'
             }`}
           >
             {/* Subtle Inner Glow for Matte Effect */}
@@ -139,7 +145,7 @@ export default function WhiteboardPage() {
             }`} />
 
             <div className={`relative z-10 transition-colors duration-300 ${
-              isConnected ? 'text-white' : 'text-red-500'
+              isConnected ? 'text-white' : 'text-[#D93D3D]'
             }`}>
               {status === 'connecting' ? (
                 <Loader2 className="w-6 h-6 animate-spin" />
@@ -152,11 +158,11 @@ export default function WhiteboardPage() {
             
             {/* Ping animation when active */}
             {isConnected && (
-              <div className={`absolute inset-0 rounded-full bg-red-400 opacity-20 ${isSpeaking ? 'animate-[ping_1.5s_linear_infinite]' : 'animate-ping'}`} />
+              <div className={`absolute inset-0 rounded-full bg-[#D93D3D] opacity-20 ${isSpeaking ? 'animate-[ping_1.5s_linear_infinite]' : 'animate-ping'}`} />
             )}
 
             {/* Tooltip */}
-            <div className="absolute bottom-full right-0 mb-6 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0 pointer-events-none whitespace-nowrap bg-gray-900 text-white text-[10px] font-bold py-1.5 px-3 rounded-lg uppercase tracking-widest shadow-xl">
+            <div className="absolute bottom-full right-0 mb-6 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0 pointer-events-none whitespace-nowrap bg-[#3D2F1E] text-white text-[10px] font-bold py-1.5 px-3 rounded-lg uppercase tracking-widest shadow-xl">
               {status === 'connecting' ? 'Connecting...' : isConnected ? 'Stop Session' : 'Start Tutor Conversation'}
             </div>
           </button>
@@ -164,12 +170,12 @@ export default function WhiteboardPage() {
       </div>
 
       {/* Right Sidebar */}
-      <div className="w-[350px] border-l border-gray-200 flex flex-col bg-gray-50/50">
+      <div className="w-[350px] border-l border-[#E0D5C5] flex flex-col bg-[#F6F4EE]">
         {/* Question Box */}
-        <div className="p-6 bg-white border-b border-gray-200">
-          <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Current Problem</h2>
-          <div className="p-5 bg-gray-900 rounded-2xl shadow-inner">
-            <p className="text-white font-medium text-lg leading-relaxed italic">
+        <div className="p-6 bg-[#FAF6EF] border-b border-[#E0D5C5]">
+          <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em] mb-4">Current Problem</h2>
+          <div className="p-5 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm text-center">
+            <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic">
               "{currentQuestion}"
             </p>
           </div>
@@ -177,12 +183,12 @@ export default function WhiteboardPage() {
 
         {/* AI Description & Responses */}
         <div className="flex-1 flex flex-col p-6 overflow-hidden">
-          <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Tutor Interaction</h2>
+          <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em] mb-4">Tutor Interaction</h2>
           <div className="flex-1 overflow-y-auto space-y-6 pr-2 custom-scrollbar">
             {transcript.length === 0 && !feedback && (
-              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-                <p className="text-sm text-gray-500 leading-relaxed">
-                  Welcome! I'm watching your progress on the board. Start solving the problem above, and I'll jump in if you need a hand.
+              <div className="bg-white p-5 rounded-2xl border border-[#E0D5C5] shadow-sm italic text-center">
+                <p className="text-sm text-[#8B7355] leading-relaxed">
+                  "I'm keeping an eye on your progress. Feel free to start anytime."
                 </p>
               </div>
             )}
@@ -193,12 +199,12 @@ export default function WhiteboardPage() {
                 key={idx} 
                 className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
                   msg.role === 'agent' 
-                    ? 'bg-blue-50 border-blue-100 text-blue-800 ml-4' 
-                    : 'bg-white border-gray-100 text-gray-800 mr-4'
+                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] ml-4' 
+                    : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] mr-4 border-dashed opacity-80'
                 }`}
               >
                 <div className="flex items-start gap-2">
-                  <span className={`text-[10px] font-bold uppercase tracking-widest ${msg.role === 'agent' ? 'text-blue-500' : 'text-gray-400'}`}>
+                  <span className={`text-[10px] font-bold uppercase tracking-widest ${msg.role === 'agent' ? 'text-[#D93D3D]' : 'text-[#8B7355]'}`}>
                     {msg.role === 'agent' ? 'Artie' : 'You'}
                   </span>
                 </div>
@@ -209,14 +215,14 @@ export default function WhiteboardPage() {
             {feedback && (
               <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
                 feedback.hasMistake 
-                  ? 'bg-red-50 border-red-100 text-red-800' 
-                  : 'bg-blue-50 border-blue-100 text-blue-800'
+                  ? 'bg-white border-[#D93D3D] text-[#D93D3D]' 
+                  : 'bg-white border-[#E0D5C5] text-[#3D2F1E]'
               }`}>
                 <div className="flex items-start gap-3">
-                  <MessageSquare className={`w-5 h-5 shrink-0 ${feedback.hasMistake ? 'text-red-500' : 'text-blue-500'}`} />
+                  <MessageSquare className={`w-5 h-5 shrink-0 ${feedback.hasMistake ? 'text-[#D93D3D]' : 'text-[#D93D3D]'}`} />
                   <div>
-                    <p className="font-bold text-xs uppercase tracking-widest mb-2">
-                       {feedback.hasMistake ? 'Observation' : 'Board Summary'}
+                    <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-60 ${feedback.hasMistake ? 'text-[#D93D3D]' : ''}`}>
+                       {feedback.hasMistake ? 'Mistake Spotted' : 'Observation'}
                     </p>
                     <p className="text-sm leading-relaxed">{feedback.feedback}</p>
                   </div>
@@ -225,28 +231,27 @@ export default function WhiteboardPage() {
             )}
 
             {isConnected && (
-              <div className={`p-5 rounded-2xl border transition-all duration-300 flex items-center gap-4 ${
+              <div className={`p-5 rounded-2xl border transition-all duration-300 shadow-md ${
                 isSpeaking 
-                  ? 'bg-red-100 border-red-200 shadow-md scale-[1.02]' 
-                  : 'bg-red-50 border-red-100 opacity-80'
+                  ? 'bg-white border-[#D93D3D]' 
+                  : 'bg-[#FAF6EF] border-[#E0D5C5] opacity-70'
               }`}>
-                <div className="relative">
-                  <Volume2 className={`w-5 h-5 ${isSpeaking ? 'text-red-600 animate-pulse' : 'text-red-400'}`} />
-                  {isSpeaking && (
-                    <div className="absolute -top-1 -right-1 flex gap-0.5">
-                      <div className="w-0.5 h-2 bg-red-500 animate-[bounce_0.6s_infinite]" />
-                      <div className="w-0.5 h-3 bg-red-500 animate-[bounce_0.8s_infinite]" />
-                      <div className="w-0.5 h-2 bg-red-500 animate-[bounce_0.7s_infinite]" />
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
-                    {isSpeaking ? 'Tutor is Speaking' : 'Listening...'}
-                  </p>
-                  <p className="text-xs text-red-800/60 mt-0.5">
-                    {isSpeaking ? 'Tap to interrupt' : 'I can hear you now'}
-                  </p>
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <Volume2 className={`w-5 h-5 ${isSpeaking ? 'text-[#D93D3D] animate-pulse' : 'text-[#8B7355]'}`} />
+                    {isSpeaking && (
+                      <div className="absolute -top-1 -right-1 flex gap-0.5">
+                        <div className="w-0.5 h-2 bg-[#D93D3D] animate-[bounce_0.6s_infinite]" />
+                        <div className="w-0.5 h-3 bg-[#D93D3D] animate-[bounce_0.8s_infinite]" />
+                        <div className="w-0.5 h-2 bg-[#D93D3D] animate-[bounce_0.7s_infinite]" />
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isSpeaking ? 'text-[#D93D3D]' : 'text-[#8B7355]'}`}>
+                      {isSpeaking ? 'Artie Is Speaking' : 'Artie Is Listening'}
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

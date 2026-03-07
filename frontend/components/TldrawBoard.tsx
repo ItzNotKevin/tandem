@@ -77,7 +77,7 @@ const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({
   }, [onStrokeEnd, strokeEndDebounceMs, captureSnapshot])
 
   return (
-    <div className="w-full h-full border border-gray-200 rounded-lg overflow-hidden shadow-inner bg-white">
+    <div className="w-full h-full border border-[#E0D5C5] rounded-none overflow-hidden shadow-inner bg-[#FAF6EF]">
       <Tldraw 
         onMount={handleMount} 
         inferDarkMode={false}

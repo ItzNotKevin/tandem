@@ -1,15 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAF6EF;
+  --foreground: #3D2F1E;
+  --paper-tan: #F6F4EE;
+  --paper-border: #E0D5C5;
+  --brand-red: #D93D3D;
+  --paper-text-secondary: #8B7355;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
 @layer utilities {
@@ -20,23 +22,32 @@
     background: transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #e2e8f0;
+    background: var(--paper-border);
     border-radius: 10px;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #cbd5e1;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    background: var(--paper-text-secondary);
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-serif), serif;
+}
+
+/* Tldraw UI Overrides - Minimal to prevent hiding elements */
+.tl-container {
+  background-color: var(--background) !important;
+}
+
+.tl-toolbar {
+  background-color: white !important; /* Keep toolbar white for clarity */
+  border: 1px solid var(--paper-border) !important;
+  border-radius: 12px !important;
+}
+
+.tl-button[data-state="selected"] {
+  background-color: var(--brand-red) !important;
+  color: white !important;
 }
