@@ -17,7 +17,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')  # Using flash for low latency
+model = genai.GenerativeModel('gemini-flash-lite-latest') # Using the ID from the available models list
 
 app = FastAPI()
 
@@ -104,6 +104,9 @@ async def upload_material(file: UploadFile = File(...)):
             "summary": summary
         }
         
+        if not isinstance(session_context.get("file_summaries"), list):
+            session_context["file_summaries"] = []
+            
         session_context["file_summaries"].append(file_info)
         return file_info
 
@@ -128,7 +131,12 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
         
         # Build context from session
         problem = request.questionContext or session_context["current_problem"]
-        summaries = "\n".join([f"- {f['filename']}: {f['summary']}" for f in session_context["file_summaries"]])
+        
+        file_summaries = session_context.get("file_summaries", [])
+        if not isinstance(file_summaries, list):
+            file_summaries = []
+            
+        summaries = "\n".join([f"- {f['filename']}: {f['summary']}" for f in file_summaries if isinstance(f, dict)])
         
         prompt = f"""
         Analysis Context:
@@ -151,20 +159,36 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
         }}
         """
         
-        response = model.generate_content([
-            prompt,
-            {"mime_type": "image/png", "data": image_bytes}
-        ])
+        try:
+            response = model.generate_content([
+                prompt,
+                {"mime_type": "image/png", "data": image_bytes}
+            ])
+        except Exception as gen_err:
+            print(f"Gemini Generation Error: {gen_err}")
+            raise HTTPException(status_code=500, detail=f"Gemini Error: {str(gen_err)}")
         
         text_response = response.text.strip()
-        if "```json" in text_response:
-            text_response = text_response.split("```json")[1].split("```")[0].strip()
-        elif "```" in text_response:
-            text_response = text_response.split("```")[1].split("```")[0].strip()
+        try:
+            # Simple JSON extraction in case model returns markdown
+            clean_text = response.text
+            if "```json" in clean_text:
+                clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_text:
+                clean_text = clean_text.split("```")[1].split("```")[0].strip()
+            
+            analysis = json.loads(clean_text)
+        except Exception as json_err:
+            print(f"JSON Parsing Error: {json_err}. Raw text: {response.text}")
+            analysis = {
+                "hasMistake": False,
+                "feedback": response.text[:200], # Fallback to raw text
+                "mistakeDescription": "Could not parse structured feedback",
+                "coordinates": None
+            }
         
-        result = json.loads(text_response)
-        session_context["last_analysis"] = result
-        return result
+        session_context["last_analysis"] = analysis
+        return analysis
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

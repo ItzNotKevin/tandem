@@ -13,6 +13,7 @@ export default function WhiteboardPage() {
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
   const [currentQuestion, setCurrentQuestion] = useState("Find the derivative of 3x² + 5x + 2")
   const [sessionData, setSessionData] = useState<any>(null)
+  const sessionRef = useRef<any>(null)
   
   // Fetch session context on mount
   useEffect(() => {
@@ -21,6 +22,7 @@ export default function WhiteboardPage() {
         const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/session/context`)
         const data = await response.json()
         setSessionData(data)
+        sessionRef.current = data
         if (data.current_problem) {
           setCurrentQuestion(data.current_problem)
         }
@@ -35,10 +37,11 @@ export default function WhiteboardPage() {
   const conversation = useConversation({
     onConnect: () => {
       console.log('Connected to ElevenLabs')
-      // Send initial context immediately upon connection
-      if (sessionData) {
-        const fileContext = sessionData.file_summaries.map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
-        const fullContext = `Context: The student is working on the problem: "${sessionData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
+      const currentData = sessionRef.current
+      if (currentData) {
+        const fileContext = currentData.file_summaries.map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
+        const fullContext = `Context: The student is working on the problem: "${currentData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
+        console.log('Sending initial context to Artie:', fullContext)
         conversation.sendContextualUpdate(fullContext)
       }
     },
@@ -56,6 +59,17 @@ export default function WhiteboardPage() {
 
   const { status, isSpeaking, sendContextualUpdate } = conversation
   const isConnected = status === 'connected'
+
+  // Proactive Context Injection: Trigger when BOTH connected and data ready
+  useEffect(() => {
+    if (isConnected && sessionData) {
+      const fileContext = sessionData.file_summaries.map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
+      const fullContext = `Context: The student is working on the problem: "${sessionData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
+      
+      console.log('Proactively sending context to Artie:', fullContext)
+      sendContextualUpdate(fullContext)
+    }
+  }, [isConnected, sessionData, sendContextualUpdate])
   
   const toggleVoice = useCallback(async () => {
     if (isConnected) {
