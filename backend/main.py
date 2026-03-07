@@ -99,25 +99,26 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
         file_summaries = session_context.get("file_summaries", [])
         summaries = "\n".join([f"- {f['filename']}: {f['summary']}" for f in file_summaries if isinstance(f, dict)])
 
-        prompt = f"""You are an AI tutor reviewing a student's whiteboard image.
+        prompt = f"""You are an AI tutor reviewing a student's handwritten whiteboard image.
 
 CONTEXT:
 - Target Problem: "{problem}"
 - Study Materials Summary:
-{summaries if summaries else "  (none uploaded)"}
+{summaries if summaries else '  (none uploaded)'}
 
 TASK:
-Look at the whiteboard image carefully. The student may be at an early stage.
-1. Describe what you see (numbers, symbols, shapes, equations, or a blank board).
-2. Compare what is written to the target problem. Are they working towards the correct answer?
-3. If the board appears blank or minimal, still respond — note it's early and encourage them to begin.
-4. NEVER say you "can't see the work" — always give a helpful, encouraging observation.
+Look at the whiteboard carefully. Describe what the student has written and assess their work.
+1. Write in natural spoken English only. NO LaTeX, NO markdown, NO symbols like $ or \\int.
+   Use words: write "integral" not "\\int", "x squared" not "x^2", "from zero to four" not "[0,4]".
+2. If the board looks blank or has very little, acknowledge that and encourage them to start.
+3. NEVER say you cannot see the work.
 
-Respond with ONLY this valid JSON (no extra text):
+Respond with ONLY this valid JSON (no extra text outside the JSON):
 {{
     "hasMistake": false,
-    "feedback": "A specific, encouraging sentence about what you see and what to try next.",
-    "mistakeDescription": "If hasMistake is true, describe the error technically. Otherwise write 'none'.",
+    "feedback": "One clear sentence describing what you see on the board in natural English.",
+    "spokenResponse": "2-3 sentences Artie should say aloud. Acknowledge what the student wrote, then ask one guiding question to help them take the next step. Never give the answer. Natural spoken English only.",
+    "mistakeDescription": "If hasMistake is true, plain English description of the error. Otherwise write 'none'.",
     "coordinates": null
 }}"""
         

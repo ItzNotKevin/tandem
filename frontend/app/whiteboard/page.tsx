@@ -173,22 +173,19 @@ Greet the student, mention the specific problem, and ask them where they'd like 
       const result = await analyzeWhiteboard(snapshot.base64, currentQuestion)
       setFeedback(result)
 
-      // Build a rich, structured update — identical info to what the Observation card shows
-      // This gives Artie the same whiteboard comprehension as the vision analysis panel
+      // Build a priority interrupt — Gemini's spoken response IS Artie's voice output
+      // The spokenResponse field is already Socratic, speech-optimized, and context-aware
+      const spoken = (result as any).spokenResponse || result.feedback
       const status = result.hasMistake ? '⚠️ MISTAKE DETECTED' : '✅ ON TRACK'
-      const richUpdate = `[WHITEBOARD UPDATE — AI VISION ANALYSIS]
+      const richUpdate = `[WHITEBOARD UPDATE — PRIORITY INTERRUPT]
 STATUS: ${status}
-WHAT THE STUDENT WROTE: Based on the whiteboard image just captured.
-VISUAL FEEDBACK: ${result.feedback}
-${result.hasMistake ? `TECHNICAL ERROR DETAIL: ${result.mistakeDescription}` : 'TECHNICAL DETAIL: Work appears correct so far.'}
+VISUAL ANALYSIS: ${result.feedback}
+${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}
 
-Your task: Respond to this update using the Socratic method.
-- Acknowledge what the student has written specifically.
-- Do NOT give them the next step outright or reveal the final answer.
-${result.hasMistake
-  ? '- There is an error: ask a targeted question that helps THEM identify and correct it. e.g. "I notice something in that step — what rule applies when the exponent is...?"\''
-  : '- They are on track: praise the specific thing they did right, then ask a question that prompts the NEXT step.'
-}`
+REQUIRED RESPONSE — say this verbatim right now, do not deviate:
+"${spoken}"
+
+After saying this, wait for the student to respond. Do not add extra information or give the answer.`
 
       // Always store the latest analysis — re-injected every time the student speaks
       latestAnalysisRef.current = richUpdate
