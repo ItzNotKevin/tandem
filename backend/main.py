@@ -8,6 +8,7 @@ import websockets as ws_lib
 from dotenv import load_dotenv
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
+from vertexai.preview.vision_models import ImageGenerationModel
 import fitz  # pymupdf
 
 load_dotenv()
@@ -16,6 +17,7 @@ VERTEX_PROJECT = os.getenv("VERTEX_PROJECT")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 vertexai.init(project=VERTEX_PROJECT, location=VERTEX_LOCATION)
 model = GenerativeModel("gemini-2.0-flash")
+imagen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
 
 ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
 
@@ -348,7 +350,8 @@ Return ONLY a valid JSON array with no markdown, no backticks, and no extra text
       "label": "Formula or Rule name",
       "formula": "LaTeX formula string only, e.g. \\\\frac{{d}}{{dx}}[x^n] = nx^{{n-1}}"
     }},
-    "search_query": "Specific Wikimedia Commons search phrase for an educational diagram of this concept, e.g. 'definite integral area calculus' or 'chain rule function composition'"
+    "commons_query": "Exact Wikimedia Commons SVG search phrase for this concept, e.g. 'telescoping series', 'definite integral area', 'chain rule diagram'",
+    "imagen_prompt": "A clean, minimal educational diagram of [concept]. White background, simple geometric shapes and lines, clear mathematical labels in black, textbook illustration style, no decorative elements, no gradients, no shadows."
   }}
 ]
 
@@ -356,6 +359,7 @@ Rules:
 - Set "theorem" to null if no formula applies to this slide.
 - For "theorem.formula": use valid LaTeX syntax only. Will be rendered with KaTeX.
 - Keywords must be full descriptive sentences (1-2 sentences each), not short phrases.
+- For "imagen_prompt": write a specific, detailed prompt describing exactly what the diagram should show for this concept. Mention specific elements like axes, curves, shaded regions, labels. Keep style: white background, clean lines, textbook quality.
 - Slides should flow logically from introduction to core concepts to application."""
 
     response = model.generate_content(lesson_prompt)
@@ -369,43 +373,67 @@ Rules:
 
     extracted_image_urls = [f"/static/images/{f}" for f in image_files]
 
-    def get_wikimedia_commons_image(query: str) -> Optional[str]:
+    WIKI_HEADERS = {"User-Agent": "CursorForCalculus/1.0 (educational tool; contact@example.com)"}
+
+    def get_commons_svg(query: str) -> Optional[str]:
         try:
             api_url = "https://commons.wikimedia.org/w/api.php"
-            search_res = req_lib.get(api_url, params={
+            search_res = req_lib.get(api_url, headers=WIKI_HEADERS, params={
                 "action": "query", "list": "search",
-                "srsearch": query, "srnamespace": "6",
-                "format": "json", "srlimit": 5
-            }, timeout=5)
+                "srsearch": f"{query} filetype:svg",
+                "srnamespace": 6, "format": "json", "srlimit": 10
+            }, timeout=8)
             results = search_res.json().get("query", {}).get("search", [])
-            image_results = [r for r in results if any(
-                r["title"].lower().endswith(ext) for ext in [".png", ".svg", ".jpg", ".jpeg"]
-            )]
-            if not image_results:
+            svg_results = [r for r in results if r["title"].lower().endswith(".svg")]
+            if not svg_results:
                 return None
-            title = image_results[0]["title"]
-            info_res = req_lib.get(api_url, params={
+            title = svg_results[0]["title"]
+            info_res = req_lib.get(api_url, headers=WIKI_HEADERS, params={
                 "action": "query", "titles": title,
                 "prop": "imageinfo", "iiprop": "url",
-                "iiurlwidth": 400, "format": "json"
-            }, timeout=5)
+                "iiurlwidth": 500, "format": "json"
+            }, timeout=8)
             pages = info_res.json().get("query", {}).get("pages", {})
             for page in pages.values():
                 imageinfo = page.get("imageinfo", [])
                 if imageinfo:
-                    return imageinfo[0].get("thumburl") or imageinfo[0].get("url")
-        except Exception:
-            pass
+                    url = imageinfo[0].get("thumburl") or imageinfo[0].get("url")
+                    print(f"[Commons SVG] '{query}' → '{title}' → {url}")
+                    return url
+        except Exception as e:
+            print(f"[Commons SVG] Error: {e}")
+        return None
+
+    def generate_imagen(prompt: str) -> Optional[str]:
+        try:
+            response = imagen_model.generate_images(
+                prompt=prompt,
+                number_of_images=1,
+                aspect_ratio="4:3",
+            )
+            if response.images:
+                filename = f"{uuid.uuid4()}.png"
+                filepath = os.path.join(IMAGES_DIR, filename)
+                with open(filepath, "wb") as f:
+                    f.write(response.images[0]._image_bytes)
+                print(f"[Imagen] Generated: {filename}")
+                return f"/static/images/{filename}"
+        except Exception as e:
+            print(f"[Imagen] Error: {e}")
         return None
 
     for i, slide in enumerate(slides):
-        search_query = slide.pop("search_query", "")
+        commons_query = slide.pop("commons_query", "")
+        imagen_prompt = slide.pop("imagen_prompt", "")
+        slide.pop("diagram_svg", None)
+
         if i < len(extracted_image_urls):
             slide["diagram_image_url"] = extracted_image_urls[i]
         else:
-            commons_url = get_wikimedia_commons_image(search_query) if search_query else None
-            slide["diagram_image_url"] = commons_url
-        slide.pop("diagram_svg", None)
+            url = get_commons_svg(commons_query) if commons_query else None
+            if not url:
+                url = generate_imagen(imagen_prompt) if imagen_prompt else None
+            slide["diagram_image_url"] = url
 
     session_context["slideshow"] = slides
     lesson = {"slides": slides, "images": extracted_image_urls}

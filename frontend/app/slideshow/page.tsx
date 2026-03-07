@@ -277,6 +277,17 @@ export default function SlideshowPage() {
                     src={currentAiSlide.diagram_image_url}
                     alt={currentAiSlide.title}
                     className="w-full h-full object-contain rounded-xl"
+                    onError={(e) => {
+                      const target = e.currentTarget
+                      target.style.display = 'none'
+                      const parent = target.parentElement
+                      if (parent) {
+                        const fallback = document.createElement('div')
+                        fallback.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#c9b99a;font-family:Georgia,serif;font-style:italic;font-size:14px'
+                        fallback.textContent = 'No diagram available'
+                        parent.appendChild(fallback)
+                      }
+                    }}
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center" style={{ color: '#c9b99a', fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '14px' }}>
