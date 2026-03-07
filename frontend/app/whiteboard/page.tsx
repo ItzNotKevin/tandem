@@ -23,6 +23,8 @@ export default function WhiteboardPage() {
   // Stores observations that arrive while Artie is speaking — flushed when he stops
   const pendingWhileSpeakingRef = useRef<string | null>(null)
   const isSpeakingRef = useRef(false)
+  // Prevents sending duplicate identical snapshots to Gemini
+  const lastSnapshotRef = useRef<string | null>(null)
   
   // Fetch session context on mount
   useEffect(() => {
@@ -168,6 +170,13 @@ Greet the student, mention the specific problem, and ask them where they'd like 
   }, [isConnected, conversation])
 
   const handleStrokeEnd = async (snapshot: { base64: string }) => {
+    // Prevent duplicate analysis if the whiteboard hasn't visually changed
+    if (snapshot.base64 === lastSnapshotRef.current) {
+      console.log('Skipping analysis: Whiteboard unchanged.')
+      return
+    }
+    
+    lastSnapshotRef.current = snapshot.base64
     setIsAnalyzing(true)
     try {
       const result = await analyzeWhiteboard(snapshot.base64, currentQuestion)
@@ -236,7 +245,7 @@ After saying this, wait for the student to respond. Do not add extra information
         <TldrawBoard 
           ref={boardRef} 
           onStrokeEnd={handleStrokeEnd} 
-          strokeEndDebounceMs={3000} 
+          strokeEndDebounceMs={1500} 
         />
       </div>
 
