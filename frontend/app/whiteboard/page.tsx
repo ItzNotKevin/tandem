@@ -49,7 +49,9 @@ export default function WhiteboardPage() {
     onMessage: (message) => {
       console.log('Received message:', message)
       if (message.source === 'ai' && message.message) {
-        setTranscript(prev => [...prev, { role: 'agent', text: message.message }])
+        // Sanitize: Remove bracketed expressions like [happy], [neutral], etc.
+        const sanitizedText = message.message.replace(/\[.*?\]/g, '').trim()
+        setTranscript(prev => [...prev, { role: 'agent', text: sanitizedText }])
       } else if (message.source === 'user' && message.message) {
         setTranscript(prev => [...prev, { role: 'user', text: message.message }])
       }
