@@ -1,0 +1,144 @@
+.page {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(135deg, #fbf6ec 0%, #f6ecd9 45%, #e6d1ad 100%);
+  background-size: 200% 200%;
+  animation: gradientShift 14s ease-in-out infinite;
+}
+
+.blobTopLeft,
+.blobBottomRight {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(48px);
+}
+
+.blobTopLeft {
+  top: -6rem;
+  left: -4rem;
+  width: 18rem;
+  height: 18rem;
+  background: rgba(247, 228, 193, 0.55);
+  animation: floatSlow 9s ease-in-out infinite;
+}
+
+.blobBottomRight {
+  right: -6rem;
+  bottom: -5rem;
+  width: 20rem;
+  height: 20rem;
+  background: rgba(220, 184, 137, 0.45);
+  animation: floatDelayed 11s ease-in-out infinite;
+}
+
+.main {
+  position: relative;
+  margin: 0 auto;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 80rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+.kicker {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.125rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: #8b6b48;
+}
+
+.title {
+  margin: 2.5rem 0 0;
+  max-width: 72rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(3rem, 6.3vw, 5.25rem);
+  line-height: 1.08;
+  color: #2a1d10;
+}
+
+.subtitle {
+  margin: 1.75rem 0 0;
+  max-width: 64rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.25rem, 2.5vw, 2rem);
+  line-height: 1.4;
+  color: #6b5339;
+}
+
+.cta {
+  margin-top: 3.5rem;
+  height: 72px;
+  padding: 0 4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b8926a;
+  border-radius: 9999px;
+  background: #b48349;
+  color: #fff8eb;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.25rem;
+  text-decoration: none;
+  transition: background-color 0.2s ease;
+}
+
+.cta:hover {
+  background: #9e723f;
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding: 3rem 1.5rem;
+  }
+
+  .kicker {
+    font-size: 1rem;
+  }
+
+  .cta {
+    width: 100%;
+    max-width: 20rem;
+    padding: 0 2rem;
+  }
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes floatSlow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -16px, 0);
+  }
+}
+
+@keyframes floatDelayed {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-18px, 14px, 0);
+  }
+}
