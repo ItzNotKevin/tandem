@@ -28,10 +28,12 @@ const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({
     const shapeIds = Array.from(editorRef.current.getCurrentPageShapeIds())
     if (shapeIds.length === 0) return null
 
-    const svg = await editorRef.current.getSvgElement(shapeIds)
-    if (!svg) return null
+    const result = await editorRef.current.getSvgElement(shapeIds)
+    if (!result) return null
 
-    // Convert SVG to data URL (simplified version for now, real implementation might need canvas)
+    const { svg } = result
+
+    // Convert SVG to data URL
     const svgData = new XMLSerializer().serializeToString(svg)
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
@@ -77,7 +79,7 @@ const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({
   }, [onStrokeEnd, strokeEndDebounceMs, captureSnapshot])
 
   return (
-    <div className="w-full h-full border border-gray-200 rounded-lg overflow-hidden shadow-inner bg-white">
+    <div className="w-full h-full border border-[#E0D5C5] rounded-none overflow-hidden shadow-inner bg-[#FAF6EF]">
       <Tldraw 
         onMount={handleMount} 
         inferDarkMode={false}
