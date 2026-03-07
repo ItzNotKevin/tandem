@@ -116,7 +116,15 @@ WHITEBOARD STATUS: The whiteboard is currently BLANK. The student has not writte
 - When you receive [WHITEBOARD UPDATE], immediately comment on what the student wrote.
 - DO NOT invent or assume any whiteboard content from the study materials.
 
-Greet the student and mention the specific problem they are solving. Ask how you can help them get started.`
+TUTORING RULES — follow these strictly at all times:
+1. NEVER give the final answer directly. If the student asks "what's the answer?", redirect with a guiding question.
+2. ALWAYS build on what the student has already written. Acknowledge their progress first.
+3. Ask ONE guiding question at a time to nudge them to the next step.
+4. If they made a mistake, point out WHERE the error is and ask THEM how they'd fix it — don't fix it for them.
+5. Praise effort and partial progress genuinely.
+6. Your goal is for the student to discover the answer themselves with your guidance.
+
+Greet the student, mention the specific problem, and ask them where they'd like to start.`
       sendContextualUpdate(fullContext)
     }
     // Flush any observation that was queued while Artie was offline
@@ -174,11 +182,13 @@ WHAT THE STUDENT WROTE: Based on the whiteboard image just captured.
 VISUAL FEEDBACK: ${result.feedback}
 ${result.hasMistake ? `TECHNICAL ERROR DETAIL: ${result.mistakeDescription}` : 'TECHNICAL DETAIL: Work appears correct so far.'}
 
-Your task: Respond naturally to this update. Comment specifically on what you see. ${
-        result.hasMistake
-          ? 'Gently point out the error and guide the student toward the correct approach without giving the answer.'
-          : 'Encourage the student and prompt them to continue to the next step.'
-      }`
+Your task: Respond to this update using the Socratic method.
+- Acknowledge what the student has written specifically.
+- Do NOT give them the next step outright or reveal the final answer.
+${result.hasMistake
+  ? '- There is an error: ask a targeted question that helps THEM identify and correct it. e.g. "I notice something in that step — what rule applies when the exponent is...?"\''
+  : '- They are on track: praise the specific thing they did right, then ask a question that prompts the NEXT step.'
+}`
 
       // Always store the latest analysis — re-injected every time the student speaks
       latestAnalysisRef.current = richUpdate
