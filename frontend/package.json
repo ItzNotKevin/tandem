@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@elevenlabs/react": "^0.14.1",
     "@tldraw/tldraw": "^4.4.0",
     "axios": "^1.13.6",
     "lucide-react": "^0.577.0",
