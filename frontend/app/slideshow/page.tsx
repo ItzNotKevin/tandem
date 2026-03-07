@@ -1,6 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { getSessionSlides, type AISlide } from '@/lib/slideshow-api'
+
+const arrowStyle = (disabled: boolean): React.CSSProperties => ({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '44px',
+  height: '44px',
+  borderRadius: '50%',
+  background: disabled ? 'transparent' : 'rgba(161,128,96,0.08)',
+  border: 'none',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  fontSize: '28px',
+  color: disabled ? '#e0d5c5' : '#a08060',
+  transition: 'background 200ms ease, color 200ms ease',
+  flexShrink: 0,
+})
 
 interface Slide {
   title: string
@@ -81,106 +99,76 @@ function LimitsDiagram() {
   )
 }
 
-const slides: Slide[] = [
+const hardcodedSlides: Slide[] = [
   {
     title: 'Limits',
     subtitle: 'The foundation of calculus',
     diagram: <LimitsDiagram />,
     keywords: ['Approaches', 'Continuity', 'Left & right limits'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'The Derivative',
     subtitle: 'Instantaneous rate of change',
     diagram: <DerivativeDiagram />,
     keywords: ['Tangent line', 'Rate of change', 'Differentiability'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Power Rule',
     subtitle: 'The most used rule in differentiation',
     diagram: <PowerRuleDiagram />,
     keywords: ['Exponent', 'Polynomial', 'Constant multiple'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Chain Rule',
     subtitle: 'Differentiating composite functions',
     diagram: <ChainRuleDiagram />,
     keywords: ['Composition', 'Inner function', 'Outer function'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Product Rule',
     subtitle: 'Two functions multiplied together',
     diagram: <ProductRuleDiagram />,
     keywords: ['Product', 'Two factors', 'Symmetric form'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Quotient Rule',
     subtitle: 'Dividing one function by another',
     diagram: <DerivativeDiagram />,
     keywords: ['Numerator', 'Denominator', 'Rational functions'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Implicit Differentiation',
     subtitle: 'When y cannot be isolated',
     diagram: <ChainRuleDiagram />,
     keywords: ['Implicit function', 'dy/dx', 'Related rates'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'Related Rates',
     subtitle: 'How quantities change together',
     diagram: <LimitsDiagram />,
     keywords: ['Time derivative', 'Geometric relationships', 'Chain rule applied'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'L\'Hôpital\'s Rule',
     subtitle: 'Resolving indeterminate forms',
     diagram: <LimitsDiagram />,
     keywords: ['Indeterminate form', '0/0 or ∞/∞', 'Repeated application'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
   {
     title: 'The Integral',
     subtitle: 'Accumulation of change',
     diagram: <PowerRuleDiagram />,
     keywords: ['Area under curve', 'Antiderivative', 'Definite vs indefinite'],
-    theorem: {
-      label: 'Theorem',
-      formula: '',
-    },
+    theorem: { label: 'Theorem', formula: '' },
   },
 ]
 
@@ -195,7 +183,28 @@ function getVisibleDots(current: number, total: number) {
 
 export default function SlideshowPage() {
   const [current, setCurrent] = useState(0)
-  const slide = slides[current]
+  const [leftHover, setLeftHover] = useState(false)
+  const [rightHover, setRightHover] = useState(false)
+  const [returnHover, setReturnHover] = useState(false)
+  const [proceedHover, setProceedHover] = useState(false)
+  const [aiSlides, setAiSlides] = useState<AISlide[] | null>(null)
+  const router = useRouter()
+
+  // On mount, check if session already has generated slides
+  useEffect(() => {
+    getSessionSlides().then((slides) => {
+      if (slides.length > 0) setAiSlides(slides)
+    })
+  }, [])
+
+  const slideCount = aiSlides ? aiSlides.length : hardcodedSlides.length
+  const currentAiSlide = aiSlides ? aiSlides[current] : null
+  const currentHardSlide = !aiSlides ? hardcodedSlides[current] : null
+
+  const title = currentAiSlide?.title ?? currentHardSlide?.title ?? ''
+  const subtitle = currentAiSlide?.subtitle ?? currentHardSlide?.subtitle
+  const keywords = currentAiSlide?.keywords ?? currentHardSlide?.keywords ?? []
+  const theorem = currentAiSlide?.theorem ?? currentHardSlide?.theorem
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#faf6ef', fontFamily: 'Georgia, serif' }}>
@@ -205,78 +214,142 @@ export default function SlideshowPage() {
         <span className="text-sm tracking-widest uppercase" style={{ color: '#a08060', fontFamily: 'sans-serif', letterSpacing: '0.15em' }}>
           Cursor for Calculus
         </span>
-        <span className="text-sm" style={{ color: '#c9b99a', fontFamily: 'sans-serif' }}>
-          {current + 1} / {slides.length}
-        </span>
+        <div className="flex items-center gap-4">
+          {aiSlides && (
+            <span className="text-xs" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>AI-generated</span>
+          )}
+          <span className="text-sm" style={{ color: '#c9b99a', fontFamily: 'sans-serif' }}>
+            {current + 1} / {slideCount}
+          </span>
+        </div>
       </header>
 
-      {/* Main slide content */}
-      <main className="flex-1 flex flex-col px-12 pt-10 pb-6 gap-6 max-w-5xl mx-auto w-full">
+      {/* Main slide content with side arrows */}
+      <div className="flex-1 flex items-stretch relative">
 
-        {/* Title block */}
-        <div className="text-center">
-          <h1 className="text-6xl font-normal tracking-tight mb-2" style={{ color: '#3d2f1e' }}>
-            {slide.title}
-          </h1>
-          {slide.subtitle && (
-            <p className="text-lg font-normal italic" style={{ color: '#a08060' }}>
-              {slide.subtitle}
-            </p>
-          )}
-        </div>
-
-        {/* Diagram + right column */}
-        <div className="flex flex-col lg:flex-row items-stretch gap-12 w-full flex-1">
-
-          {/* Diagram */}
-          <div
-            className="w-full lg:w-[26rem] rounded-2xl flex items-center justify-center shrink-0 p-4"
-            style={{ backgroundColor: '#f5ede0', border: '1px solid #e0d5c5' }}
-          >
-            {slide.diagram}
-          </div>
-
-          {/* Right: theorem + keywords */}
-          <div className="flex flex-col gap-8 flex-1 justify-center pt-2">
-
-            {/* Theorem */}
-            {slide.theorem && (
-              <div className="rounded-xl px-7 py-5" style={{ backgroundColor: '#f0e6d2', border: '1px solid #d4c4a8' }}>
-                <p className="text-xs uppercase tracking-widest mb-2" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
-                  {slide.theorem.label}
-                </p>
-                <p className="text-2xl" style={{ color: '#5c3d1e', fontFamily: 'Georgia, serif' }}>
-                  {slide.theorem.formula}
-                </p>
-              </div>
-            )}
-
-            {/* Keywords */}
-            <div className="flex flex-col gap-3">
-              {slide.keywords.map((kw) => (
-                <div key={kw} className="flex items-center gap-4">
-                  <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: '#c17f3a' }} />
-                  <span className="text-lg" style={{ color: '#6b5a3e' }}>{kw}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* Footer nav */}
-      <footer className="flex items-center justify-between px-12 py-7 border-t" style={{ borderColor: '#e0d5c5' }}>
+        {/* Left arrow */}
         <button
           onClick={() => setCurrent((c) => c - 1)}
           disabled={current === 0}
-          className="text-sm transition"
+          onMouseEnter={() => setLeftHover(true)}
+          onMouseLeave={() => setLeftHover(false)}
           style={{
-            color: current === 0 ? '#d4c4a8' : '#8b7355',
-            fontFamily: 'sans-serif',
-            cursor: current === 0 ? 'not-allowed' : 'pointer',
+            ...arrowStyle(current === 0),
+            position: 'absolute',
+            left: '36px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 10,
+            background: current !== 0 && leftHover ? 'rgba(161,128,96,0.16)' : arrowStyle(current === 0).background,
           }}
         >
-          ← Previous
+          ‹
+        </button>
+
+        {/* Slide content */}
+        <main className="flex flex-col pt-10 pb-6 gap-6 flex-1 max-w-5xl mx-auto w-full">
+
+          {/* Title block */}
+          <div className="text-center">
+            <h1 className="text-6xl font-normal tracking-tight mb-2" style={{ color: '#3d2f1e' }}>
+              {title}
+            </h1>
+            {subtitle && (
+              <p className="text-lg font-normal italic" style={{ color: '#a08060' }}>
+                {subtitle}
+              </p>
+            )}
+          </div>
+
+          {/* Diagram + right column */}
+          <div className="flex flex-col lg:flex-row items-stretch gap-12 w-full flex-1">
+
+            {/* Diagram */}
+            <div
+              className="w-full lg:w-[26rem] rounded-2xl flex items-center justify-center shrink-0 p-4"
+              style={{ backgroundColor: '#f5ede0', border: '1px solid #e0d5c5' }}
+            >
+              {currentAiSlide ? (
+                <div
+                  className="w-full h-full"
+                  dangerouslySetInnerHTML={{ __html: currentAiSlide.diagram_svg }}
+                />
+              ) : (
+                currentHardSlide?.diagram
+              )}
+            </div>
+
+            {/* Right: theorem + keywords */}
+            <div className="flex flex-col gap-8 flex-1 justify-center pt-2">
+
+              {/* Theorem */}
+              {theorem && (
+                <div className="rounded-xl px-7 py-5" style={{ backgroundColor: '#f0e6d2', border: '1px solid #d4c4a8' }}>
+                  <p className="text-xs uppercase tracking-widest mb-2" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
+                    {theorem.label}
+                  </p>
+                  <p className="text-2xl" style={{ color: '#5c3d1e', fontFamily: 'Georgia, serif' }}>
+                    {theorem.formula}
+                  </p>
+                </div>
+              )}
+
+              {/* Keywords */}
+              <div className="flex flex-col gap-3">
+                {keywords.map((kw) => (
+                  <div key={kw} className="flex items-center gap-4">
+                    <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: '#c17f3a' }} />
+                    <span className="text-lg" style={{ color: '#6b5a3e' }}>{kw}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* Right arrow */}
+        <button
+          onClick={() => setCurrent((c) => c + 1)}
+          disabled={current === slideCount - 1}
+          onMouseEnter={() => setRightHover(true)}
+          onMouseLeave={() => setRightHover(false)}
+          style={{
+            ...arrowStyle(current === slideCount - 1),
+            position: 'absolute',
+            right: '36px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 10,
+            background: current !== slideCount - 1 && rightHover ? 'rgba(161,128,96,0.16)' : arrowStyle(current === slideCount - 1).background,
+          }}
+        >
+          ›
+        </button>
+      </div>
+
+      {/* Footer */}
+      <footer className="flex items-center justify-between px-8 py-7 border-t" style={{ borderColor: '#e0d5c5' }}>
+
+        {/* Return to Generation */}
+        <button
+          onClick={() => router.push('/record')}
+          onMouseEnter={() => setReturnHover(true)}
+          onMouseLeave={() => setReturnHover(false)}
+          style={{
+            fontFamily: 'sans-serif',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            color: returnHover ? '#5c3d1e' : '#a08060',
+            background: returnHover ? 'rgba(161,128,96,0.1)' : 'transparent',
+            border: '1px solid',
+            borderColor: returnHover ? '#c9b99a' : '#d4c4a8',
+            borderRadius: '8px',
+            padding: '11px 22px',
+            transition: 'all 200ms ease',
+          }}
+        >
+          ← Return to Generation
         </button>
 
         {/* Dots — sliding window */}
@@ -285,11 +358,11 @@ export default function SlideshowPage() {
             style={{
               display: 'flex',
               gap: '8px',
-              transform: `translateX(-${getVisibleDots(current, slides.length).start * 16}px)`,
+              transform: `translateX(-${getVisibleDots(current, slideCount).start * 16}px)`,
               transition: 'transform 300ms ease',
             }}
           >
-            {slides.map((_, i) => (
+            {Array.from({ length: slideCount }).map((_, i) => (
               <button
                 key={i}
                 onClick={() => setCurrent(i)}
@@ -309,17 +382,26 @@ export default function SlideshowPage() {
           </div>
         </div>
 
+        {/* Proceed to Problems */}
         <button
-          onClick={() => setCurrent((c) => c + 1)}
-          disabled={current === slides.length - 1}
-          className="text-sm transition"
+          onClick={() => router.push('/whiteboard')}
+          onMouseEnter={() => setProceedHover(true)}
+          onMouseLeave={() => setProceedHover(false)}
           style={{
-            color: current === slides.length - 1 ? '#d4c4a8' : '#8b7355',
             fontFamily: 'sans-serif',
-            cursor: current === slides.length - 1 ? 'not-allowed' : 'pointer',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            color: proceedHover ? '#5c3d1e' : '#a08060',
+            background: proceedHover ? 'rgba(161,128,96,0.1)' : 'transparent',
+            border: '1px solid',
+            borderColor: proceedHover ? '#c9b99a' : '#d4c4a8',
+            borderRadius: '8px',
+            padding: '11px 22px',
+            transition: 'all 200ms ease',
           }}
         >
-          Next →
+          Proceed to Problems →
         </button>
       </footer>
     </div>
