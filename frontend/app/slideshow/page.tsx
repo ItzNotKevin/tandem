@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSessionSlides, type AISlide } from '@/lib/slideshow-api'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 
 const arrowStyle = (disabled: boolean): React.CSSProperties => ({
   display: 'flex',
@@ -270,10 +272,17 @@ export default function SlideshowPage() {
               style={{ backgroundColor: '#f5ede0', border: '1px solid #e0d5c5' }}
             >
               {currentAiSlide ? (
-                <div
-                  className="w-full h-full"
-                  dangerouslySetInnerHTML={{ __html: currentAiSlide.diagram_svg }}
-                />
+                currentAiSlide.diagram_image_url ? (
+                  <img
+                    src={currentAiSlide.diagram_image_url}
+                    alt={currentAiSlide.title}
+                    className="w-full h-full object-contain rounded-xl"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center" style={{ color: '#c9b99a', fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '14px' }}>
+                    No diagram available
+                  </div>
+                )
               ) : (
                 currentHardSlide?.diagram
               )}
@@ -285,12 +294,27 @@ export default function SlideshowPage() {
               {/* Theorem */}
               {theorem && (
                 <div className="rounded-xl px-7 py-5" style={{ backgroundColor: '#f0e6d2', border: '1px solid #d4c4a8' }}>
-                  <p className="text-xs uppercase tracking-widest mb-2" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
+                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
                     {theorem.label}
                   </p>
-                  <p className="text-2xl" style={{ color: '#5c3d1e', fontFamily: 'Georgia, serif' }}>
-                    {theorem.formula}
-                  </p>
+                  {currentAiSlide ? (
+                    <div
+                      style={{ color: '#5c3d1e', fontSize: '1.4rem' }}
+                      dangerouslySetInnerHTML={{
+                        __html: (() => {
+                          try {
+                            return katex.renderToString(theorem.formula, { throwOnError: false, displayMode: true })
+                          } catch {
+                            return `<span style="font-family:Georgia,serif">${theorem.formula}</span>`
+                          }
+                        })()
+                      }}
+                    />
+                  ) : (
+                    <p className="text-2xl" style={{ color: '#5c3d1e', fontFamily: 'Georgia, serif' }}>
+                      {theorem.formula}
+                    </p>
+                  )}
                 </div>
               )}
 

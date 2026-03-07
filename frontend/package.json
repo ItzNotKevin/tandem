@@ -12,6 +12,7 @@
     "@elevenlabs/react": "^0.14.1",
     "@tldraw/tldraw": "^4.4.0",
     "axios": "^1.13.6",
+    "katex": "^0.16.37",
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
     "react": "19.2.3",

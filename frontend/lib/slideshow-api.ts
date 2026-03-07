@@ -4,8 +4,8 @@ export interface AISlide {
   title: string
   subtitle: string
   keywords: string[]
-  theorem: { label: string; formula: string }
-  diagram_svg: string
+  theorem: { label: string; formula: string } | null
+  diagram_image_url: string | null
 }
 
 export async function generateSlides(prompt: string, numSlides = 8): Promise<AISlide[]> {

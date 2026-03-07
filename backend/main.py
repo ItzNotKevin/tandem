@@ -6,16 +6,16 @@ from typing import Optional, List
 import os, base64, json, asyncio, uuid, requests as req_lib
 import websockets as ws_lib
 from dotenv import load_dotenv
-import google.generativeai as genai
-from PIL import Image
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
 import fitz  # pymupdf
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-flash-lite-latest')
+VERTEX_PROJECT = os.getenv("VERTEX_PROJECT")
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+vertexai.init(project=VERTEX_PROJECT, location=VERTEX_LOCATION)
+model = GenerativeModel("gemini-2.0-flash")
 
 ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
 
@@ -123,7 +123,7 @@ Respond with ONLY this valid JSON (no extra text outside the JSON):
 }}"""
         
         response = model.generate_content([
-            {"mime_type": "image/png", "data": image_bytes},
+            Part.from_data(data=image_bytes, mime_type="image/png"),
             prompt
         ])
         text = response.text.strip()
@@ -227,7 +227,7 @@ async def upload_material(file: UploadFile = File(...)):
         Return a concise summary.
         """
         response = model.generate_content([
-            {"mime_type": file.content_type, "data": contents},
+            Part.from_data(data=contents, mime_type=file.content_type),
             prompt
         ])
         summary = response.text.strip()
@@ -256,7 +256,7 @@ async def extract_content(file: UploadFile = File(...)):
         contents = await file.read()
         prompt = "Summarize this document for an AI tutor's context."
         response = model.generate_content([
-            {"mime_type": file.content_type, "data": contents},
+            Part.from_data(data=contents, mime_type=file.content_type),
             prompt
         ])
         extracted_text = response.text.strip()
@@ -286,7 +286,7 @@ async def generate_lesson(
 
         # Extract text
         text_response = model.generate_content([
-            {"mime_type": file.content_type, "data": contents},
+            Part.from_data(data=contents, mime_type=file.content_type),
             "Extract all text from this document exactly as it appears. Return only raw text."
         ])
         all_text_parts.append(text_response.text.strip())
@@ -321,24 +321,36 @@ async def generate_lesson(
 
     combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}"
 
-    lesson_prompt = f"""Based on this educational material, create a structured lesson.
+    lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a structured slideshow lesson.
 
 {combined}
 
-Return ONLY valid JSON in this exact format:
-{{
-  "audio_script": "A natural, conversational spoken script for an AI tutor to read aloud. Engaging tone, 2-3 minutes when spoken at normal pace.",
-  "slides": [
-    {{
-      "title": "Topic title",
-      "subtitle": "One-line engaging description",
-      "keywords": ["key point 1", "key point 2", "key point 3"],
-      "theorem": {{ "label": "Formula or Rule name", "formula": "the formula or rule" }}
-    }}
-  ]
-}}
+Create 5-8 slides that cover the main concepts from the material above.
 
-Generate 5-8 slides covering the main concepts. Set theorem to null if no formula applies. Keep keywords concise (3-4 per slide)."""
+Return ONLY a valid JSON array with no markdown, no backticks, and no extra text. Each slide must follow this exact schema:
+
+[
+  {{
+    "title": "Short slide title",
+    "subtitle": "One-line engaging description of this slide's concept",
+    "keywords": [
+      "A full descriptive sentence explaining the first key point in enough detail that a student understands it without prior context.",
+      "A full descriptive sentence explaining the second key point with a specific example or implication.",
+      "A full descriptive sentence explaining the third key point, connecting it to the broader concept."
+    ],
+    "theorem": {{
+      "label": "Formula or Rule name",
+      "formula": "LaTeX formula string only, e.g. \\\\frac{{d}}{{dx}}[x^n] = nx^{{n-1}}"
+    }},
+    "search_query": "Specific Wikimedia Commons search phrase for an educational diagram of this concept, e.g. 'definite integral area calculus' or 'chain rule function composition'"
+  }}
+]
+
+Rules:
+- Set "theorem" to null if no formula applies to this slide.
+- For "theorem.formula": use valid LaTeX syntax only. Will be rendered with KaTeX.
+- Keywords must be full descriptive sentences (1-2 sentences each), not short phrases.
+- Slides should flow logically from introduction to core concepts to application."""
 
     response = model.generate_content(lesson_prompt)
     text = response.text.strip()
@@ -347,8 +359,50 @@ Generate 5-8 slides covering the main concepts. Set theorem to null if no formul
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
 
-    lesson = json.loads(text)
-    lesson["images"] = [f"/static/images/{f}" for f in image_files]
+    slides = json.loads(text)
+
+    extracted_image_urls = [f"/static/images/{f}" for f in image_files]
+
+    def get_wikimedia_commons_image(query: str) -> Optional[str]:
+        try:
+            api_url = "https://commons.wikimedia.org/w/api.php"
+            search_res = req_lib.get(api_url, params={
+                "action": "query", "list": "search",
+                "srsearch": query, "srnamespace": "6",
+                "format": "json", "srlimit": 5
+            }, timeout=5)
+            results = search_res.json().get("query", {}).get("search", [])
+            image_results = [r for r in results if any(
+                r["title"].lower().endswith(ext) for ext in [".png", ".svg", ".jpg", ".jpeg"]
+            )]
+            if not image_results:
+                return None
+            title = image_results[0]["title"]
+            info_res = req_lib.get(api_url, params={
+                "action": "query", "titles": title,
+                "prop": "imageinfo", "iiprop": "url",
+                "iiurlwidth": 400, "format": "json"
+            }, timeout=5)
+            pages = info_res.json().get("query", {}).get("pages", {})
+            for page in pages.values():
+                imageinfo = page.get("imageinfo", [])
+                if imageinfo:
+                    return imageinfo[0].get("thumburl") or imageinfo[0].get("url")
+        except Exception:
+            pass
+        return None
+
+    for i, slide in enumerate(slides):
+        search_query = slide.pop("search_query", "")
+        if i < len(extracted_image_urls):
+            slide["diagram_image_url"] = extracted_image_urls[i]
+        else:
+            commons_url = get_wikimedia_commons_image(search_query) if search_query else None
+            slide["diagram_image_url"] = commons_url
+        slide.pop("diagram_svg", None)
+
+    session_context["slideshow"] = slides
+    lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson
     return lesson
 
