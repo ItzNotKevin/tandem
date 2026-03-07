@@ -11,7 +11,7 @@ export default function WhiteboardPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [feedback, setFeedback] = useState<AnalysisResponse | null>(null)
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
-  const [currentQuestion, setCurrentQuestion] = useState("Find the derivative of 3x² + 5x + 2")
+  const [currentQuestion, setCurrentQuestion] = useState("What are we working on today?")
   const [sessionData, setSessionData] = useState<any>(null)
   const sessionRef = useRef<any>(null)
   

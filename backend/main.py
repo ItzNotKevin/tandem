@@ -32,7 +32,7 @@ app.add_middleware(
 
 # In-memory session store (Hackathon-style simplicity)
 session_context = {
-    "current_problem": "Find the derivative of 3x² + 5x + 2",
+    "current_problem": "What are we working on today?",
     "file_summaries": [],
     "last_analysis": None
 }
@@ -74,7 +74,7 @@ async def upload_material(file: UploadFile = File(...)):
             analysis_prompt = """
             Extract the following from this academic material to help an AI Tutor guide a student:
             1. CORE CONCEPTS: The main topics covered.
-            2. KEY FORMULAS/THEOREMS: Any specific math/science rules mentioned.
+            2. KEY PRINCIPLES/RULES: Any specific rules, definitions, or frameworks mentioned.
             3. POTENTIAL PRACTICE PROBLEMS: Specific examples or questions found in the text that the tutor can use.
             4. SESSION GOAL: What should the student master after reading this?
             
@@ -200,7 +200,7 @@ async def generate_problem(request: Request):
 
     try:
         body = await request.json()
-        context = body.get("context", "Calculus")
+        context = body.get("context", "General Subject")
         
         prompt = f"Generate a challenging {context} problem. Return ONLY JSON: {{'question': '...', 'solution': '...', 'context': '...'}}"
         
