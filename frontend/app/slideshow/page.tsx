@@ -553,7 +553,13 @@ export default function SlideshowPage() {
               className="w-full lg:w-[26rem] rounded-2xl flex items-center justify-center shrink-0 p-4"
               style={{ backgroundColor: '#f6ecd9', border: '1px solid #e6d1ad' }}
             >
-              {currentAiSlide ? (
+              {current === 0 ? (
+                <img
+                  src="/derivatives_rules.png"
+                  alt="Rules of Derivatives"
+                  className="w-full h-full object-contain rounded-xl mix-blend-multiply"
+                />
+              ) : currentAiSlide ? (
                 currentAiSlide.diagram_image_url ? (
                   <img
                     src={currentAiSlide.diagram_image_url}
