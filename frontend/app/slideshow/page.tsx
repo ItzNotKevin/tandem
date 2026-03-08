@@ -213,7 +213,7 @@ export default function SlideshowPage() {
 
       {/* Header */}
       <header className="flex items-center justify-between px-12 py-5 border-b" style={{ borderColor: '#e0d5c5' }}>
-        <BrandLogo className="w-40" />
+        <BrandLogo className="w-32" />
         <div className="flex items-center gap-4">
           {aiSlides && (
             <span className="text-xs" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>AI-generated</span>
@@ -387,7 +387,7 @@ export default function SlideshowPage() {
 
         {/* Dots — sliding window */}
         <div className="flex items-center gap-3">
-          <BrandLogo variant="mark" className="w-6 h-6 opacity-80" />
+          <BrandLogo variant="mark" className="w-5 h-5 opacity-80" />
           <div style={{ width: '72px', overflow: 'hidden' }}>
           <div
             style={{

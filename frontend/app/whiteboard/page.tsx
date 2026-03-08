@@ -217,7 +217,7 @@ After saying this, wait for the student to respond. Do not add extra information
       <div className="flex-1 relative flex flex-col">
         {/* Brand Header */}
         <div className="absolute top-6 left-8 z-20 flex items-center gap-2">
-          <BrandLogo variant="mark" className="w-6 h-6 opacity-70" />
+          <BrandLogo variant="mark" className="w-5 h-5 opacity-70" />
           <span className="text-[10px] font-black text-[#A08060] uppercase tracking-[0.3em] opacity-40">
             Whiteboard
           </span>
@@ -242,7 +242,7 @@ After saying this, wait for the student to respond. Do not add extra information
       {/* Right Sidebar */}
       <div className="w-[350px] border-l border-[#E0D5C5] flex flex-col bg-[#F6F4EE]">
         <div className="px-6 pt-5 pb-4 border-b border-[#E0D5C5] bg-[#FAF6EF]">
-          <BrandLogo className="w-32" />
+          <BrandLogo className="w-28" />
         </div>
 
         {/* Question Box */}

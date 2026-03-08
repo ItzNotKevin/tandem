@@ -48,8 +48,8 @@
 }
 
 .logo {
-  width: min(27rem, 92vw);
-  margin-bottom: 1.5rem;
+  width: min(22rem, 84vw);
+  margin-bottom: 0.85rem;
 }
 
 .kicker {

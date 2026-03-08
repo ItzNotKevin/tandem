@@ -173,7 +173,7 @@ export default function RecordPage() {
               <div className="absolute inset-2 rounded-full border-2 border-[#A6977F] animate-ping opacity-50" style={{ animationDelay: "0.3s" }} />
               <div className="absolute inset-4 rounded-full border-2 border-[#5A5145] animate-ping opacity-70" style={{ animationDelay: "0.6s" }} />
               <div className="absolute inset-5 flex items-center justify-center">
-                <BrandLogo variant="mark" className="w-10 h-10" />
+                <BrandLogo variant="mark" className="w-8 h-8" />
               </div>
             </div>
             <div className="text-center space-y-2">
@@ -192,7 +192,7 @@ export default function RecordPage() {
       )}
 
       <header className="flex justify-between items-center px-8 py-4 text-xs font-semibold tracking-[0.15em] text-[#A6977F]">
-        <BrandLogo className="w-36" />
+        <BrandLogo className="w-32" />
         <div>RECORDING STUDIO</div>
       </header>
 
