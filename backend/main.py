@@ -14,6 +14,15 @@ import fitz  # pymupdf
 
 load_dotenv()
 
+# Support Google credentials as a JSON string env var (for Railway/cloud deployments)
+_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+if _creds_json:
+    import tempfile
+    _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+    _tmp.write(_creds_json)
+    _tmp.close()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _tmp.name
+
 VERTEX_PROJECT = os.getenv("VERTEX_PROJECT")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 vertexai.init(project=VERTEX_PROJECT, location=VERTEX_LOCATION)
