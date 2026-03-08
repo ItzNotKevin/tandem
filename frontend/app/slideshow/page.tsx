@@ -756,7 +756,6 @@ export default function SlideshowPage() {
 
           {/* Dots */}
           <div className="flex items-center gap-3">
-            <BrandLogo variant="mark" className="w-6 h-6 opacity-80" />
             <div style={{ width: '72px', overflow: 'hidden' }}>
               <div
                 style={{
