@@ -30,6 +30,7 @@ const YAWN_SUSTAIN_MS = 900;         // must hold for this long to count as yawn
 
 // Engagement logic
 const DISENGAGEMENT_THRESHOLD_MS = 6000;
+const EYE_CLOSED_THRESHOLD_MS = 2000; // eyes closed for 2s = disengaged (separate from general threshold)
 const CHECK_INTERVAL_MS = 400;
 const SCORE_HISTORY_LEN = 8;         // frames to smooth attention score over
 
@@ -53,6 +54,7 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
   const rafRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastDetectAt = useRef(0);
+  const lastVideoTs = useRef(0);   // last timestamp passed to detectForVideo — must strictly increase
   const activeRef = useRef(false);
 
   const [engagedUI, setEngagedUI] = useState(true);
@@ -68,6 +70,7 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
   const yawningSince = useRef<number | null>(null);
   const lapseCount = useRef(0);
   const scoreHistory = useRef<number[]>([]);
+  const eyeClosedSince = useRef<number | null>(null);
 
   // Last-known pose — used for context when face disappears
   const lastKnownYaw   = useRef(0);
@@ -79,6 +82,16 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
   // Load MediaPipe once
   useEffect(() => {
     let cancelled = false;
+
+    // TF Lite WASM routes all log levels through console.error.
+    // Suppress those messages so Next.js Turbopack's overlay doesn't treat them as errors.
+    const origError = console.error.bind(console);
+    console.error = (...args: unknown[]) => {
+      const msg = String(args[0] ?? "");
+      if (msg.includes("XNNPACK") || msg.includes("TensorFlow Lite") || msg.includes("INFO:")) return;
+      origError(...args);
+    };
+
     (async () => {
       const { FaceLandmarker, FilesetResolver } = await import("@mediapipe/tasks-vision");
       const vision = await FilesetResolver.forVisionTasks(WASM_URL);
@@ -96,9 +109,10 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
         landmarkerRef.current = fl;
         setLoaded(true);
       }
-    })().catch(console.error);
+    })().catch(origError);
     return () => {
       cancelled = true;
+      console.error = origError;
       landmarkerRef.current?.close();
     };
   }, []);
@@ -132,11 +146,13 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
       faceLostSince.current = null;
       pitchHistory.current = [];
       boardGlanceSince.current = null;
+      eyeClosedSince.current = null;
 
       fetch("/api/engagement/reset", { method: "POST" }).catch(() => {});
 
       activeRef.current = true;
       lastDetectAt.current = 0;
+      lastVideoTs.current = 0;
 
       function loop(ts: DOMHighResTimeStamp) {
         if (!activeRef.current) return;
@@ -164,8 +180,12 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
     const fl = landmarkerRef.current;
     if (!video || !fl || video.readyState < 2 || video.videoWidth === 0) return;
 
+    // MediaPipe requires strictly monotonically increasing timestamps
+    const safeTs = Math.max(ts, lastVideoTs.current + 1);
+    lastVideoTs.current = safeTs;
+
     let result: any;
-    try { result = fl.detectForVideo(video, ts); } catch { return; }
+    try { result = fl.detectForVideo(video, safeTs); } catch { return; }
     if (!result) return;
 
     if (!result.faceLandmarks?.length) {
@@ -216,9 +236,17 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
     const eyesDrowsy = !eyesClosed && avgEAR < EAR_DROWSY_THRESHOLD;
 
     if (eyesClosed) {
-      computeAndUpdate(false, `eyes closed (EAR ${avgEAR.toFixed(2)})`, false, false, 0);
+      if (!eyeClosedSince.current) eyeClosedSince.current = now;
+      const closedMs = now - eyeClosedSince.current;
+      if (closedMs >= EYE_CLOSED_THRESHOLD_MS) {
+        computeAndUpdate(false, `eyes closed (${Math.round(closedMs / 1000)}s)`, false, false, 0, 0, 0, true);
+      } else {
+        // Brief closure — penalise score but don't mark disengaged yet
+        computeAndUpdate(true, `eyes closing (EAR ${avgEAR.toFixed(2)})`, false, true, 0);
+      }
       return;
     }
+    eyeClosedSince.current = null;
 
     // ── Yawn detection (jawOpen blendshape) ─────────────────────────────
     const blendshapes = result.faceBlendshapes?.[0]?.categories ?? [];
@@ -234,7 +262,7 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
       (now - yawningSince.current) > YAWN_SUSTAIN_MS;
 
     if (sustainedYawn) {
-      computeAndUpdate(false, `yawning (jaw=${jawOpen.toFixed(2)})`, false, false, 0);
+      computeAndUpdate(false, `yawning (jaw=${jawOpen.toFixed(2)})`, false, false, 0, 0, 0, true);
       return;
     }
 
@@ -298,6 +326,7 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
     jawOpen: number,
     absYaw = 0,
     pitch = 0,
+    instant = false,  // bypass DISENGAGEMENT_THRESHOLD_MS for hard signals
   ) {
     let engaged = rawEngaged;
     const now = Date.now();
@@ -352,9 +381,9 @@ export default function EngagementTracker({ isActive, onStatusChange }: Props) {
     setReason(newReason);
 
     if (!engaged) {
-      if (!disengagedSince.current) {
-        disengagedSince.current = now;
-      } else if (now - disengagedSince.current >= DISENGAGEMENT_THRESHOLD_MS && currentlyEngaged.current) {
+      if (!disengagedSince.current) disengagedSince.current = now;
+      const overThreshold = instant || (now - disengagedSince.current >= DISENGAGEMENT_THRESHOLD_MS);
+      if (overThreshold && currentlyEngaged.current) {
         currentlyEngaged.current = false;
         lapseCount.current++;
         postEvent(false);

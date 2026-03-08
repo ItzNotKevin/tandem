@@ -13,12 +13,27 @@ export default function RecordPage() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [recordings, setRecordings] = useState<{ id: number; duration: number; transcribing: boolean }[]>([]);
+  type WordStamp = { text: string; type: string; start: number; end: number };
+  type EngagementEvent = { timestamp_seconds: number; engaged: boolean };
+  type RecordingEntry = {
+    id: number;
+    duration: number;
+    transcribing: boolean;
+    transcript?: string;
+    words?: WordStamp[];
+    engagementEvents?: EngagementEvent[];
+  };
+
+  const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
+  const [viewingRecording, setViewingRecording] = useState<RecordingEntry | null>(null);
+  const engagementEventsRef = useRef<EngagementEvent[]>([]);
+  const recordingStartTimeRef = useRef<number>(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStep, setGeneratingStep] = useState("");
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [engagementStatus, setEngagementStatus] = useState<"engaged" | "disengaged" | "inactive">("inactive");
   const [disengagementCount, setDisengagementCount] = useState(0);
+  const [customContext, setCustomContext] = useState("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -47,6 +62,10 @@ export default function RecordPage() {
   const handleEngagementChange = (engaged: boolean, lapses: number) => {
     setEngagementStatus(engaged ? "engaged" : "disengaged");
     setDisengagementCount(lapses);
+    if (recordingStartTimeRef.current > 0) {
+      const timestamp_seconds = (Date.now() - recordingStartTimeRef.current) / 1000;
+      engagementEventsRef.current.push({ timestamp_seconds, engaged });
+    }
   };
 
   const handleFileSelect = (files: FileList | null) => {
@@ -69,6 +88,8 @@ export default function RecordPage() {
       return;
     }
     // Engagement reset is handled by EngagementTracker on mount
+    engagementEventsRef.current = [];
+    recordingStartTimeRef.current = Date.now();
     setIsRecording(true);
     setIsPaused(false);
     setRecordingTime(0);
@@ -95,26 +116,39 @@ export default function RecordPage() {
     if (!mediaRecorderRef.current) return;
     const id = Date.now();
     const duration = recordingTime;
+    const snapshotEvents = [...engagementEventsRef.current];
+    const mimeType = mediaRecorderRef.current.mimeType || "audio/webm";
+    engagementEventsRef.current = [];
+    recordingStartTimeRef.current = 0;
 
     mediaRecorderRef.current.onstop = async () => {
-      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
       audioChunksRef.current = [];
 
-      setRecordings((prev) => [...prev, { id, duration, transcribing: true }]);
+      setRecordings((prev) => [...prev, { id, duration, transcribing: true, engagementEvents: snapshotEvents }]);
 
+      let transcript = "";
+      let words: WordStamp[] = [];
       try {
         const formData = new FormData();
         formData.append("file", audioBlob, "recording.webm");
+        console.log("[transcribe] blob size:", audioBlob.size, "type:", audioBlob.type);
         const res = await fetch("/api/transcribe", { method: "POST", body: formData });
+        const data = await res.json();
+        console.log("[transcribe] response:", res.status, data);
         if (res.ok) {
-          const { text } = await res.json();
-          transcriptsRef.current.push(text);
+          transcript = data.text ?? "";
+          words = data.words ?? [];
+          transcriptsRef.current.push(transcript);
+        } else {
+          transcript = `[Error: ${data.error ?? res.status}]`;
         }
       } catch (err) {
         console.error("Transcription failed:", err);
-      } finally {
-        setRecordings((prev) => prev.map((r) => r.id === id ? { ...r, transcribing: false } : r));
       }
+      setRecordings((prev) => prev.map((r) =>
+        r.id === id ? { ...r, transcribing: false, transcript, words } : r
+      ));
     };
 
     mediaRecorderRef.current.stop();
@@ -196,18 +230,18 @@ export default function RecordPage() {
         <div>RECORDING STUDIO</div>
       </header>
 
-      <main className="flex flex-col items-center justify-center mt-12 md:mt-24 px-6 gap-6">
-        <div className="text-center mb-10 space-y-4">
-          <h1 className="text-4xl md:text-5xl font-medium tracking-tight" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
+      <main className="flex flex-col items-center justify-center mt-2 px-6 gap-3">
+        <div className="text-center mb-2 space-y-1">
+          <h1 className="text-2xl md:text-3xl font-medium tracking-tight" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
             New Session
           </h1>
           <p className="italic text-[#A6977F] font-serif text-lg">Upload materials and record your explanation</p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-8 w-full max-w-5xl">
+        <div className="flex flex-col md:flex-row gap-4 w-full max-w-5xl">
 
           {/* Left: File Upload */}
-          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-8 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[320px]">
+          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-4 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[220px]">
             <div className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-6">ATTACHMENTS</div>
 
             <label
@@ -248,12 +282,12 @@ export default function RecordPage() {
           </div>
 
           {/* Right: Recording Interface */}
-          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-8 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[320px]">
-            <div className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-6">CONTROLS</div>
+          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-4 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[220px]">
+            <div className="text-[10px] tracking-widest text-[#B3A48C] font-semibold mb-4">CONTROLS</div>
 
-            <div className="flex flex-col flex-1 items-center justify-center space-y-8">
+            <div className="flex flex-col flex-1 items-center justify-center space-y-4">
               <div
-                className={`text-6xl tracking-wider transition-colors duration-300 ${isRecording && !isPaused ? "text-[#D93D3D]" : "text-[#5A5145]"}`}
+                className={`text-5xl tracking-wider transition-colors duration-300 ${isRecording && !isPaused ? "text-[#D93D3D]" : "text-[#5A5145]"}`}
                 style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
               >
                 {formatTime(recordingTime)}
@@ -274,14 +308,12 @@ export default function RecordPage() {
 
                 {/* Engagement indicator */}
                 {engagementStatus !== "inactive" && (
-                  <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                    engagementStatus === "engaged"
-                      ? "bg-[#E8F5E9] text-[#4CAF50]"
-                      : "bg-[#FDECEA] text-[#D93D3D]"
-                  }`}>
-                    <span className={`w-2 h-2 rounded-full ${
-                      engagementStatus === "engaged" ? "bg-[#4CAF50]" : "bg-[#D93D3D] animate-pulse"
-                    }`} />
+                  <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${engagementStatus === "engaged"
+                    ? "bg-[#E8F5E9] text-[#4CAF50]"
+                    : "bg-[#FDECEA] text-[#D93D3D]"
+                    }`}>
+                    <span className={`w-2 h-2 rounded-full ${engagementStatus === "engaged" ? "bg-[#4CAF50]" : "bg-[#D93D3D] animate-pulse"
+                      }`} />
                     {engagementStatus === "engaged" ? "Engaged" : "Disengaged"}
                     {disengagementCount > 0 && (
                       <span className="ml-1 opacity-70">· {disengagementCount} lapse{disengagementCount !== 1 ? "s" : ""}</span>
@@ -291,26 +323,26 @@ export default function RecordPage() {
               </div>
 
               {/* Browser-based FaceMesh engagement tracker */}
-              <div className="w-full max-w-xs">
+              <div className="w-full max-w-xs scale-90 origin-top">
                 <EngagementTracker isActive={isRecording} onStatusChange={handleEngagementChange} />
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 {!isRecording ? (
-                  <button onClick={handleStartRecording} className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-colors shadow-sm font-medium">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /></svg>
+                  <button onClick={handleStartRecording} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-colors shadow-sm font-medium text-sm">
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /></svg>
                     Start Recording
                   </button>
                 ) : (
                   <>
-                    <button onClick={handlePauseToggle} className="flex items-center gap-2 px-5 py-3 rounded-full border border-[#D1C6B3] text-[#5A5145] hover:bg-[#EAE4D6] transition-colors font-medium">
+                    <button onClick={handlePauseToggle} className="flex items-center gap-2 px-4 py-2.5 rounded-full border border-[#D1C6B3] text-[#5A5145] hover:bg-[#EAE4D6] transition-colors font-medium text-sm">
                       {isPaused
-                        ? <><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> Resume</>
-                        : <><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> Pause</>
+                        ? <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> Resume</>
+                        : <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> Pause</>
                       }
                     </button>
-                    <button onClick={handleStopRecording} className="flex items-center gap-2 px-5 py-3 rounded-full bg-[#EADDD9] border border-[#D9C4BD] text-[#D93D3D] hover:bg-[#E3D1CC] transition-colors font-medium">
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z" /></svg>
+                    <button onClick={handleStopRecording} className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#EADDD9] border border-[#D9C4BD] text-[#D93D3D] hover:bg-[#E3D1CC] transition-colors font-medium text-sm">
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z" /></svg>
                       End
                     </button>
                   </>
@@ -337,11 +369,19 @@ export default function RecordPage() {
                         {rec.transcribing && <span className="text-xs text-[#A6977F] italic">Transcribing...</span>}
                       </div>
                       {!rec.transcribing && (
-                        <button onClick={() => handleRemoveRecording(rec.id, i)} className="text-[#A6977F] hover:text-[#D93D3D] transition-colors">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setViewingRecording(rec)}
+                            className="text-xs text-[#5A5145] hover:text-[#453D32] border border-[#D1C6B3] hover:border-[#A6977F] rounded px-2 py-0.5 transition-colors"
+                          >
+                            View
+                          </button>
+                          <button onClick={() => handleRemoveRecording(rec.id, i)} className="text-[#A6977F] hover:text-[#D93D3D] transition-colors">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))}
@@ -357,16 +397,127 @@ export default function RecordPage() {
           </div>
         )}
 
-        <div className="mt-4 w-full max-w-5xl flex justify-center">
+        <div className="mt-1 w-full max-w-5xl flex flex-col gap-1">
+          <label className="text-[10px] tracking-widest text-[#B3A48C] font-semibold pl-1">ADDITIONAL CONTEXT (OPTIONAL)</label>
+          <textarea
+            value={customContext}
+            onChange={(e) => setCustomContext(e.target.value)}
+            placeholder="E.g., Focus on standard deviation, keep the tone encouraging..."
+            className="w-full bg-[#EFEADF] border border-[#DFD5C2] rounded-xl p-3 text-sm text-[#5A5145] placeholder-[#B3A48C] focus:outline-none focus:border-[#A6977F] transition-colors resize-y min-h-[60px]"
+          />
+        </div>
+
+        <div className="mt-2 w-full max-w-5xl flex justify-center pb-4">
           <button
             onClick={handleGenerateLesson}
             disabled={!canGenerate}
-            className="px-10 py-4 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-all shadow-md font-semibold tracking-wider text-sm hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
+            className="px-8 py-3 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-all shadow-md font-semibold tracking-wider text-sm hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
           >
             GENERATE LESSON
           </button>
         </div>
       </main>
+
+      {/* Transcript Viewer Modal */}
+      {viewingRecording && (() => {
+        const rec = viewingRecording;
+        const words = rec.words ?? [];
+        const events = rec.engagementEvents ?? [];
+
+        // Build disengaged intervals from events
+        const intervals: { start: number; end: number }[] = [];
+        let disStart: number | null = null;
+        for (const ev of events) {
+          if (!ev.engaged && disStart === null) disStart = ev.timestamp_seconds;
+          if (ev.engaged && disStart !== null) {
+            intervals.push({ start: disStart, end: ev.timestamp_seconds });
+            disStart = null;
+          }
+        }
+        if (disStart !== null) intervals.push({ start: disStart, end: rec.duration });
+
+        const isWordDisengaged = (w: WordStamp) => {
+          if (w.type === "spacing") return false;
+          const mid = (w.start + w.end) / 2;
+          return intervals.some((iv) => mid >= iv.start && mid <= iv.end);
+        };
+
+        const totalDis = intervals.reduce((acc, iv) => acc + (iv.end - iv.start), 0);
+        const pct = rec.duration > 0 ? Math.round((totalDis / rec.duration) * 100) : 0;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setViewingRecording(null)}>
+            <div className="bg-[#F6F4EE] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-[#DFD5C2]">
+                <div>
+                  <h2 className="text-lg font-medium text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, serif' }}>Transcript</h2>
+                  <p className="text-xs text-[#A6977F] mt-0.5">{formatTime(rec.duration)} recording · {pct}% disengaged</p>
+                </div>
+                <button onClick={() => setViewingRecording(null)} className="text-[#A6977F] hover:text-[#5A5145] transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Timeline bar */}
+              {rec.duration > 0 && (
+                <div className="px-6 pt-4">
+                  <div className="text-xs text-[#A6977F] mb-1 tracking-wider">ATTENTION TIMELINE</div>
+                  <div className="relative h-3 rounded-full bg-[#E8F5E9] overflow-hidden">
+                    {intervals.map((iv, idx) => (
+                      <div
+                        key={idx}
+                        className="absolute top-0 h-full bg-[#FDECEA] border-l border-r border-[#F5C6C6]"
+                        style={{
+                          left: `${(iv.start / rec.duration) * 100}%`,
+                          width: `${((iv.end - iv.start) / rec.duration) * 100}%`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex justify-between text-xs text-[#A6977F] mt-1">
+                    <span>0:00</span>
+                    <span>{formatTime(rec.duration)}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 text-xs text-[#A6977F]">
+                    <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#E8F5E9] border border-[#7A9E7E] inline-block" /> Engaged</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#FDECEA] border border-[#F5C6C6] inline-block" /> Disengaged</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Transcript body */}
+              <div className="overflow-y-auto px-6 py-4 max-h-[40vh]">
+                {words.length > 0 ? (
+                  <p className="text-sm text-[#5A5145] leading-relaxed">
+                    {words.map((w, i) => (
+                      w.type === "spacing" ? (
+                        <span key={i}> </span>
+                      ) : (
+                        <span
+                          key={i}
+                          className={`rounded px-0.5 transition-colors ${isWordDisengaged(w) ? "bg-[#FDECEA] text-[#D93D3D]" : ""}`}
+                          title={isWordDisengaged(w) ? "Disengaged" : undefined}
+                        >
+                          {w.text}
+                        </span>
+                      )
+                    ))}
+                  </p>
+                ) : rec.transcript ? (
+                  <p className="text-sm text-[#5A5145] leading-relaxed">{rec.transcript}</p>
+                ) : rec.transcript === "" ? (
+                  <p className="text-sm text-[#A6977F] italic">No speech detected in this recording.</p>
+                ) : (
+                  <p className="text-sm text-[#A6977F] italic">Transcription failed. Check backend is running.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <style jsx>{`
         @keyframes bounce {

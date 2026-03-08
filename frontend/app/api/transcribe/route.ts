@@ -11,7 +11,8 @@ export async function POST(req: NextRequest) {
   })
 
   if (!backendRes.ok) {
-    return NextResponse.json({ error: 'Transcription failed' }, { status: 502 })
+    const detail = await backendRes.text()
+    return NextResponse.json({ error: detail }, { status: 502 })
   }
 
   return NextResponse.json(await backendRes.json())

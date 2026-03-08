@@ -666,9 +666,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
         )
         if not res.ok:
             raise HTTPException(status_code=res.status_code, detail=res.text)
-        text = res.json().get("text", "")
+        data = res.json()
+        text = data.get("text", "")
+        words = data.get("words", [])
         session_content["transcript"] = text
-        return {"text": text}
+        return {"text": text, "words": words}
     except HTTPException:
         raise
     except Exception as e:
