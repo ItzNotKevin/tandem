@@ -1,11 +1,129 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
 import BrandLogo from '@/components/BrandLogo'
 import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp } from 'lucide-react'
+import LatexRenderer from '@/components/LatexRenderer'
 import { useConversation } from '@elevenlabs/react'
+
+function normalizeProblemMath(text: string): string {
+  if (!text) return text
+
+  const wrapExpr = (expr: string) => {
+    const cleaned = expr.trim().replace(/\s*dx\s*$/i, '')
+    if (/^\(.+\)$/.test(cleaned)) {
+      return cleaned
+    }
+    return `(${cleaned})`
+  }
+
+  const latexPattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g
+  const latexBlocks: string[] = []
+  let masked = text.replace(latexPattern, (m) => {
+    const token = `__LATEX_BLOCK_${latexBlocks.length}__`
+    latexBlocks.push(m)
+    return token
+  })
+
+  let normalized = masked
+    .replace(/\[\s*integral symbol\s*\]/gi, '∫')
+    .replace(/\bintegral symbol\b/gi, '∫')
+
+  // Handle mixed phrasing like: "integral of ∫(2x+3)dx from 0 to 4"
+  normalized = normalized.replace(
+    /\bintegral\s+of\s*∫?\s*(.+?)\s*dx\s*from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
+    (_, expr: string, lower: string, upper: string) =>
+      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  )
+
+  normalized = normalized.replace(
+    /\b(?:the\s+)?definite\s+integral\s+of\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
+    (_, expr: string, lower: string, upper: string) =>
+      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  )
+
+  normalized = normalized.replace(
+    /\b(?:the\s+)?integral\s+of\s+(.+?)(?=[,.;!?]|$)/gi,
+    (_, expr: string) => `$\\int ${wrapExpr(expr)}\\,dx$`
+  )
+
+  // Handle already symbolic integral with bounds written in words:
+  // "∫(2x+3)dx from 0 to 4" -> "\int_0^4 (2x+3)\,dx"
+  normalized = normalized.replace(
+    /∫\s*(.+?)\s*dx\s*from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
+    (_, expr: string, lower: string, upper: string) =>
+      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  )
+
+  // Render caret exponents as math superscripts in display text (e.g. x^2, t^-1).
+  // Handles optional spaces around ^ and supports single-letter variable bases.
+  normalized = normalized.replace(
+    /(^|[^\\$])([A-Za-z])\s*\^\s*(-?\d+)\b/g,
+    (_, prefix: string, base: string, exp: string) => `${prefix}$${base}^{${exp}}$`
+  )
+
+  // Restore original LaTeX segments untouched.
+  normalized = normalized.replace(/__LATEX_BLOCK_(\d+)__/g, (_, idx: string) => {
+    const block = latexBlocks[Number(idx)]
+    return block ?? ''
+  })
+
+  // Catch any remaining plain-text exponents introduced after restore.
+  normalized = normalized.replace(
+    /\b([A-Za-z])\s*\^\s*(-?\d+)\b/g,
+    (_, base: string, exp: string) => `$${base}^{${exp}}$`
+  )
+
+  return normalized
+}
+
+function applySmartLineBreaks(text: string): string {
+  if (!text) return text
+
+  const NBSP = '\u00A0'
+  const latexPattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g
+  const latexBlocks: string[] = []
+  const masked = text.replace(latexPattern, (m) => {
+    const token = `__LATEX_BLOCK_${latexBlocks.length}__`
+    latexBlocks.push(m)
+    return token
+  })
+
+  let out = masked
+
+  // Keep common multi-word math phrases together.
+  const protectedPhrases = [
+    'Riemann sum',
+    'right endpoints',
+    'left endpoints',
+    'sample points',
+    'limit definition',
+    'definite integral',
+    'partial sums',
+  ]
+  for (const phrase of protectedPhrases) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), (m) =>
+      m.replace(/ /g, NBSP)
+    )
+  }
+
+  // Keep "from a to b" together when it appears in prose.
+  out = out.replace(
+    /\bfrom\s+([^\s,.;!?]+)\s+to\s+([^\s,.;!?]+)\b/gi,
+    (_m, a: string, b: string) => `from${NBSP}${a}${NBSP}to${NBSP}${b}`
+  )
+
+  // Restore original LaTeX blocks; these are already unbreakable tokens visually.
+  out = out.replace(/__LATEX_BLOCK_(\d+)__/g, (_, idx: string) => {
+    const block = latexBlocks[Number(idx)]
+    return block ?? ''
+  })
+
+  return out
+}
 
 export default function WhiteboardPage() {
   const boardRef = useRef<TldrawBoardHandle>(null)
@@ -28,6 +146,10 @@ export default function WhiteboardPage() {
   const lastSnapshotRef = useRef<string | null>(null)
 
   const transcriptEndRef = useRef<HTMLDivElement>(null)
+  const displayQuestion = useMemo(
+    () => applySmartLineBreaks(normalizeProblemMath(currentQuestion)),
+    [currentQuestion]
+  )
 
   // Auto-scroll transcript to bottom
   useEffect(() => {
@@ -283,7 +405,7 @@ Use this context to understand what is currently on the board if the student tal
             <div className="h-[180px] overflow-y-auto custom-scrollbar p-6 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm">
               <div className="min-h-full flex items-center justify-center">
                 <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic text-center text-balance">
-                  "{currentQuestion}"
+                  <LatexRenderer>{displayQuestion}</LatexRenderer>
                 </p>
               </div>
             </div>
@@ -455,4 +577,3 @@ Use this context to understand what is currently on the board if the student tal
     </div>
   )
 }
-

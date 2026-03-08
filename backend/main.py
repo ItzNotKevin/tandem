@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 import os, base64, json, asyncio, uuid, requests as req_lib, re
+import httpx
 import websockets as ws_lib
 from dotenv import load_dotenv
 import vertexai
@@ -84,6 +85,102 @@ class WhiteboardAnalysisRequest(BaseModel):
 
 class TranscriptRequest(BaseModel):
     transcript: str
+
+LATEX_BLOCK_RE = re.compile(r"(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)")
+
+
+def extract_json_text(raw: str) -> str:
+    text = raw.strip()
+    if "```json" in text:
+        return text.split("```json", 1)[1].split("```", 1)[0].strip()
+    if "```" in text:
+        return text.split("```", 1)[1].split("```", 1)[0].strip()
+    return text
+
+
+def _wrap_integrand(expr: str) -> str:
+    cleaned = expr.strip()
+    cleaned = re.sub(r"^\s*(the\s+)?function\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*dx\s*$", "", cleaned, flags=re.IGNORECASE)
+    if re.match(r"^\(.+\)$", cleaned):
+        return cleaned
+    return f"({cleaned})"
+
+
+def _normalize_non_latex_segment(text: str) -> str:
+    out = text
+
+    out = re.sub(r"\[\s*integral symbol\s*\]", "∫", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bintegral symbol\b", "∫", out, flags=re.IGNORECASE)
+    out = re.sub(r"\[\s*summation symbol\s*\]", "Σ", out, flags=re.IGNORECASE)
+
+    # "∫ from 0 to 4 of ...", "definite integral of ... from 0 to 4", etc.
+    out = re.sub(
+        r"∫\s*from\s+(.+?)\s+to\s+(.+?)\s+of\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\int_{{{m.group(1).strip()}}}^{{{m.group(2).strip()}}} {_wrap_integrand(m.group(3))}\\,dx$",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:the\s+)?definite\s+integral\s+of\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\int_{{{m.group(2).strip()}}}^{{{m.group(3).strip()}}} {_wrap_integrand(m.group(1))}\\,dx$",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:the\s+)?integral\s+of\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\int_{{{m.group(2).strip()}}}^{{{m.group(3).strip()}}} {_wrap_integrand(m.group(1))}\\,dx$",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:the\s+)?integral\s+of\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\int {_wrap_integrand(m.group(1))}\\,dx$",
+        out,
+        flags=re.IGNORECASE,
+    )
+
+    # "Σ from i=1 to n of i" -> "$\\sum_{i=1}^{n} i$"
+    out = re.sub(
+        r"Σ\s*from\s+(.+?)\s+to\s+(.+?)\s+of\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\sum_{{{m.group(1).strip()}}}^{{{m.group(2).strip()}}} {m.group(3).strip()}$",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:the\s+)?sum\s+from\s+(.+?)\s+to\s+(.+?)\s+of\s+(.+?)(?=[,.;!?]|$)",
+        lambda m: f"$\\sum_{{{m.group(1).strip()}}}^{{{m.group(2).strip()}}} {m.group(3).strip()}$",
+        out,
+        flags=re.IGNORECASE,
+    )
+
+    # x^2, t^-1 -> $x^{2}$, $t^{-1}$
+    out = re.sub(
+        r"\b([A-Za-z])\s*\^\s*(-?\d+)\b",
+        lambda m: f"${m.group(1)}^{{{m.group(2)}}}$",
+        out,
+    )
+    return out
+
+
+def normalize_problem_text(problem: str) -> str:
+    if not isinstance(problem, str):
+        return problem
+
+    parts = LATEX_BLOCK_RE.split(problem)
+    normalized_parts: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("$"):
+            normalized_parts.append(part)
+        else:
+            normalized_parts.append(_normalize_non_latex_segment(part))
+    return "".join(normalized_parts)
+
+
+def normalize_problem_list(problems: list[str]) -> list[str]:
+    return [normalize_problem_text(p) for p in problems if isinstance(p, str)]
 
 
 @app.get("/")
@@ -170,14 +267,23 @@ async def generate_problem(request: Request):
     try:
         body = await request.json()
         context = body.get("context", "General Subject")
-        prompt = f"Generate a challenging but solvable {context} problem for a student. Return ONLY JSON: {{\"question\": \"...\", \"solution\": \"...\", \"context\": \"...\"}}"
+        prompt = f"""Generate one challenging but solvable {context} problem for a student.
+
+Formatting requirements:
+- Put every mathematical expression in inline LaTeX with single-dollar delimiters (e.g. $\\int_0^4 (2x+3)\\,dx$, $x^2$, $\\sum_{{i=1}}^n i$).
+- Never write math in prose like "integral from ... to ..." or "sum from ... to ...".
+- In JSON strings, escape backslashes correctly (e.g. "\\\\int", "\\\\sum", "\\\\Delta x").
+
+Return ONLY valid JSON with this exact schema:
+{{"question": "...", "solution": "...", "context": "..."}}
+"""
         response = model.generate_content(prompt)
-        text = response.text.strip()
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
+        text = extract_json_text(response.text)
         result = json.loads(text)
+        if "question" in result:
+            result["question"] = normalize_problem_text(result["question"])
+        if "solution" in result and isinstance(result["solution"], str):
+            result["solution"] = normalize_problem_text(result["solution"])
         session_context["current_problem"] = result["question"]
         return result
     except Exception as e:
@@ -323,29 +429,34 @@ async def generate_lesson(
     custom_context: str = Form(""),
 ):
   try:
+    # ── 1. PARALLEL FILE EXTRACTION ───────────────────────────────────────
+    valid_files = [f for f in files if f.filename]
+
+    async def extract_single_file(file: UploadFile):
+        contents = await file.read()
+        resp = await asyncio.to_thread(
+            model.generate_content,
+            [
+                Part.from_data(data=contents, mime_type=file.content_type),
+                "Extract all text from this document exactly as it appears. Return only raw text."
+            ]
+        )
+        return contents, file, resp.text.strip()
+
+    extraction_results = await asyncio.gather(*[extract_single_file(f) for f in valid_files]) if valid_files else []
+
     all_text_parts = []
     image_files = []
     uploaded_file_summaries = []
 
-    for file in files:
-        if not file.filename:
-            continue
-        contents = await file.read()
-
-        # Extract text
-        text_response = model.generate_content([
-            Part.from_data(data=contents, mime_type=file.content_type),
-            "Extract all text from this document exactly as it appears. Return only raw text."
-        ])
-        extracted = text_response.text.strip()
+    for contents, file, extracted in extraction_results:
         all_text_parts.append(extracted)
         uploaded_file_summaries.append({
             "filename": file.filename,
             "type": file.content_type,
-            "summary": extracted[:2000],  # keep summary concise for whiteboard context
+            "summary": extracted[:2000],
         })
 
-        # Extract images
         if file.content_type == "application/pdf":
             try:
                 pdf_doc = fitz.open(stream=contents, filetype="pdf")
@@ -354,25 +465,25 @@ async def generate_lesson(
                         xref = img[0]
                         base_image = pdf_doc.extract_image(xref)
                         ext = base_image["ext"]
-                        filename = f"{uuid.uuid4()}.{ext}"
-                        with open(os.path.join(IMAGES_DIR, filename), "wb") as f:
-                            f.write(base_image["image"])
-                        image_files.append(filename)
+                        fname = f"{uuid.uuid4()}.{ext}"
+                        with open(os.path.join(IMAGES_DIR, fname), "wb") as fh:
+                            fh.write(base_image["image"])
+                        image_files.append(fname)
             except Exception:
                 pass
         elif file.content_type in ["image/png", "image/jpeg"]:
             ext = "png" if "png" in file.content_type else "jpg"
-            filename = f"{uuid.uuid4()}.{ext}"
-            with open(os.path.join(IMAGES_DIR, filename), "wb") as f:
-                f.write(contents)
-            image_files.append(filename)
+            fname = f"{uuid.uuid4()}.{ext}"
+            with open(os.path.join(IMAGES_DIR, fname), "wb") as fh:
+                fh.write(contents)
+            image_files.append(fname)
 
     extracted_text = "\n\n".join(all_text_parts)
-
     session_content["extracted_text"] = extracted_text
     session_content["transcript"] = transcript
     session_content["images"] = image_files
 
+    # ── 2. BUILD ENGAGEMENT + CUSTOM CONTEXT NOTES ────────────────────────
     engagement_events = session_content.get("engagement_events", [])
     disengaged = [e for e in engagement_events if not e["engaged"]]
     engagement_note = ""
@@ -396,6 +507,7 @@ Treat missed content as the highest priority for thorough coverage."""
 
     combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}{engagement_note}{custom_context_note}"
 
+    # ── 3. SLIDE GENERATION — single Gemini pass (self-review merged in) ──
     lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a focused slideshow lesson.
 
 {combined}
@@ -409,54 +521,52 @@ Return ONLY a valid JSON array with no markdown, no backticks, and no extra text
     "title": "Short slide title (4 words max)",
     "subtitle": "One crisp line describing the concept",
     "keywords": [
-      "Brief key point 1 — one short sentence only.",
-      "Brief key point 2 — one short sentence only.",
-      "Brief key point 3 — one short sentence only."
+      "Brief key point 1 — one short sentence only (under 15 words).",
+      "Brief key point 2 — one short sentence only (under 15 words).",
+      "Brief key point 3 — one short sentence only (under 15 words)."
     ],
     "theorem": {{
       "label": "Formula name",
       "formula": "LaTeX formula string only, e.g. \\\\frac{{d}}{{dx}}[x^n] = nx^{{n-1}}"
     }},
     "commons_queries": [
-      "specific calculus/mathematics SVG phrase, e.g. 'riemann sum left endpoint calculus interval'",
-      "broader calculus phrase, e.g. 'riemann sum rectangle approximation mathematics'",
-      "general calculus fallback, e.g. 'definite integral calculus diagram'"
+      "specific phrase — MUST contain 'calculus' or 'mathematics', e.g. 'riemann sum left endpoint calculus interval'",
+      "broader phrase — MUST contain 'calculus' or 'mathematics', e.g. 'riemann sum rectangle approximation mathematics'",
+      "fallback phrase — MUST contain 'calculus' or 'mathematics', e.g. 'definite integral calculus diagram'"
     ],
-    "geogebra_query": "short math term for GeoGebra, e.g. 'riemann sum', 'chain rule', 'definite integral'",
-    "script": "2-3 sentence spoken narration for this slide. Plain English only — no LaTeX, no dollar signs, no backslashes. Write as a professor speaking aloud, e.g. 'The definite integral measures the net area under a curve between two points. We compute it using the Fundamental Theorem of Calculus by finding an antiderivative and evaluating it at the bounds.'"
+    "geogebra_query": "short math term for GeoGebra, e.g. 'riemann sum'",
+    "script": "2-3 sentence spoken narration. Plain English only — no LaTeX, no dollar signs, no backslashes."
   }}
 ]
 
-Rules:
-- Set "theorem" to null if no formula applies to this slide.
-- For "theorem.formula": valid LaTeX only, rendered with KaTeX.
-- Keywords: ONE short sentence each (under 15 words). No padding. Extract only the most important fact.
-- For "commons_queries": ALWAYS include the word "calculus" or "mathematics" in every phrase to avoid domain confusion. Rank from most to least specific.
-- For "geogebra_query": concise math term only.
-- For "script": 2-3 natural spoken sentences. No math symbols or LaTeX — spell everything out in words.
-- Slides should flow logically from introduction to core concept to application."""
+STRICT RULES — follow exactly or the app will break:
+- "theorem": set to null if no formula applies to this slide.
+- "theorem.formula": valid LaTeX only, rendered with KaTeX. ALWAYS use double backslashes (\\\\frac, \\\\int, \\\\sum, \\\\sqrt).
+- "keywords": each item MUST be a single sentence under 15 words. No long explanations.
+- "commons_queries": EVERY query string MUST include the word "calculus" or "mathematics". This is mandatory — generic queries return wrong images.
+- "commons_queries": rank from most to least specific.
+- "script": natural spoken English only. No symbols, no LaTeX, no dollar signs. Spell math in words.
+- Slides must flow logically: introduction → core concept → application."""
 
-    response = model.generate_content(lesson_prompt)
-    text = response.text.strip()
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0].strip()
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0].strip()
+    raw_slide_resp = await asyncio.to_thread(model.generate_content, lesson_prompt)
+    slide_json = raw_slide_resp.text.strip()
+    if "```json" in slide_json:
+        slide_json = slide_json.split("```json")[1].split("```")[0].strip()
+    elif "```" in slide_json:
+        slide_json = slide_json.split("```")[1].split("```")[0].strip()
 
-    # Iteratively fix unescaped LaTeX backslashes (e.g. \frac → \\frac).
-    # json.JSONDecodeError.pos is just after the bad backslash — double it and retry.
+    # Fix unescaped LaTeX backslashes iteratively
     slides = None
     for _ in range(100):
         try:
-            slides = json.loads(text)
+            slides = json.loads(slide_json)
             break
         except json.JSONDecodeError as e:
             if 'escape' in str(e).lower():
-                # C JSON ext: e.pos AT the backslash; Python impl: e.pos AFTER it
-                if e.pos < len(text) and text[e.pos] == '\\':
-                    text = text[:e.pos] + '\\\\' + text[e.pos + 1:]
-                elif e.pos > 0 and text[e.pos - 1] == '\\':
-                    text = text[:e.pos - 1] + '\\\\' + text[e.pos:]
+                if e.pos < len(slide_json) and slide_json[e.pos] == '\\':
+                    slide_json = slide_json[:e.pos] + '\\\\' + slide_json[e.pos + 1:]
+                elif e.pos > 0 and slide_json[e.pos - 1] == '\\':
+                    slide_json = slide_json[:e.pos - 1] + '\\\\' + slide_json[e.pos:]
                 else:
                     raise
             else:
@@ -464,70 +574,28 @@ Rules:
     if slides is None:
         raise HTTPException(status_code=500, detail="Slide generation failed: JSON parsing error")
 
-    # Self-correction pass: Gemini reviews its own output and fixes issues before image search.
-    review_prompt = f"""You generated the following slide definitions for a calculus/mathematics course. Review and fix any problems.
-
-{json.dumps(slides, indent=2)}
-
-Check each slide for these issues and fix them:
-1. commons_queries: Every phrase MUST be specific to mathematics/calculus. If any query could return non-math results (e.g. computer science, networking, biology), rewrite it to include explicit mathematical context like "calculus", "mathematics", "number line", "graph function", etc.
-2. keywords: Each must be a single short sentence (under 15 words). Condense any that are too long.
-3. theorem.formula: Must be valid LaTeX. Fix any broken formulas.
-4. title: Must be 4 words or fewer.
-
-Return ONLY the corrected JSON array. No markdown, no explanation, no extra text. If a field is already correct, leave it unchanged."""
-
-    try:
-        review_resp = model.generate_content(review_prompt)
-        review_text = review_resp.text.strip()
-        if "```json" in review_text:
-            review_text = review_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in review_text:
-            review_text = review_text.split("```")[1].split("```")[0].strip()
-        reviewed = None
-        for _ in range(100):
-            try:
-                reviewed = json.loads(review_text)
-                break
-            except json.JSONDecodeError as e:
-                if 'escape' in str(e).lower():
-                    if e.pos < len(review_text) and review_text[e.pos] == '\\':
-                        review_text = review_text[:e.pos] + '\\\\' + review_text[e.pos + 1:]
-                    elif e.pos > 0 and review_text[e.pos - 1] == '\\':
-                        review_text = review_text[:e.pos - 1] + '\\\\' + review_text[e.pos:]
-                    else:
-                        break
-                else:
-                    break
-        if reviewed and isinstance(reviewed, list) and len(reviewed) == len(slides):
-            slides = reviewed
-            print(f"[Self-Review] Applied corrections to {len(slides)} slides")
-        else:
-            print("[Self-Review] Review parse failed or length mismatch — using original slides")
-    except Exception as e:
-        print(f"[Self-Review] Error: {e} — using original slides")
-
     extracted_image_urls = [f"/static/images/{f}" for f in image_files]
 
     WIKI_HEADERS = {"User-Agent": "CursorForCalculus/1.0 (educational tool; contact@example.com)"}
-    WIKI_API = "https://commons.wikimedia.org/w/api.php"
+    WIKI_API_URL = "https://commons.wikimedia.org/w/api.php"
 
-    def fetch_svg_candidates(queries: list) -> list:
-        """Try ranked queries, collect up to 6 unique (title, thumb_url) candidates."""
-        seen = set()
-        candidates = []
+    # ── 4. PARALLEL IMAGE FETCHING — all slides at once via async httpx ───
+    async def fetch_svg_candidates_async(queries: list, client: httpx.AsyncClient) -> list:
+        seen: set = set()
+        candidates: list = []
         for query in queries:
             try:
-                search_res = req_lib.get(WIKI_API, headers=WIKI_HEADERS, params={
+                search_res = await client.get(WIKI_API_URL, headers=WIKI_HEADERS, params={
                     "action": "query", "list": "search",
                     "srsearch": f"{query} filetype:svg",
                     "srnamespace": 6, "format": "json", "srlimit": 5
                 }, timeout=8)
                 results = search_res.json().get("query", {}).get("search", [])
-                titles = [r["title"] for r in results if r["title"].lower().endswith(".svg") and r["title"] not in seen]
+                titles = [r["title"] for r in results
+                          if r["title"].lower().endswith(".svg") and r["title"] not in seen]
                 if not titles:
                     continue
-                info_res = req_lib.get(WIKI_API, headers=WIKI_HEADERS, params={
+                info_res = await client.get(WIKI_API_URL, headers=WIKI_HEADERS, params={
                     "action": "query", "titles": "|".join(titles[:3]),
                     "prop": "imageinfo", "iiprop": "url",
                     "iiurlwidth": 400, "format": "json"
@@ -542,30 +610,33 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
                             candidates.append((title, thumb))
             except Exception as e:
                 print(f"[Commons] query='{query}' error: {e}")
-            if len(candidates) >= 6:
+            if len(candidates) >= 3:  # capped at 3 — enough for selection, much faster
                 break
         return candidates
 
-    def select_best_image(candidates: list, slide_title: str, keywords: list) -> Optional[str]:
-        """Use Gemini vision to pick the clearest math/calculus image. Always falls back to first candidate."""
+    async def select_best_image_async(
+        candidates: list, slide_title: str, keywords: list, client: httpx.AsyncClient
+    ) -> Optional[str]:
         if not candidates:
             return None
         if len(candidates) == 1:
-            print(f"[Gemini Select] Single candidate for '{slide_title}': using it directly")
             return candidates[0][1]
         try:
-            parts = []
-            valid = []
-            for title, url in candidates:
+            async def download_candidate(title_url):
+                title, url = title_url
                 try:
-                    r = req_lib.get(url, timeout=6)
-                    if r.ok:
-                        parts.append(Part.from_data(data=r.content, mime_type="image/png"))
-                        valid.append((title, url))
+                    r = await client.get(url, timeout=6)
+                    if r.is_success:
+                        return (title, url, r.content)
                 except Exception:
-                    continue
+                    pass
+                return None
+
+            dl_results = await asyncio.gather(*[download_candidate(c) for c in candidates])
+            valid = [r for r in dl_results if r is not None]
             if not valid:
                 return candidates[0][1]
+            parts = [Part.from_data(data=content, mime_type="image/png") for _, _, content in valid]
             keyword_text = " ".join(keywords[:2]) if keywords else ""
             selection_prompt = (
                 f'This slide is about "{slide_title}" from a calculus/mathematics course.\n'
@@ -576,8 +647,8 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
                 f'Respond with ONLY a single integer (0 to {len(valid)-1}).'
             )
             parts.append(selection_prompt)
-            response = model.generate_content(parts)
-            answer = response.text.strip().lower()
+            sel_resp = await asyncio.to_thread(model.generate_content, parts)
+            answer = sel_resp.text.strip().lower()
             digits = ''.join(c for c in answer if c.isdigit())
             if digits:
                 idx = int(digits[:2])
@@ -586,13 +657,12 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
                     return valid[idx][1]
         except Exception as e:
             print(f"[Gemini Select] Error: {e}")
-        # Always fall back to first candidate rather than returning None
         print(f"[Gemini Select] Falling back to first candidate for '{slide_title}'")
         return candidates[0][1]
 
-    def get_geogebra_image(query: str) -> Optional[str]:
+    async def get_geogebra_image_async(query: str, client: httpx.AsyncClient) -> Optional[str]:
         try:
-            res = req_lib.get(
+            res = await client.get(
                 "https://api.geogebra.org/v1.0/materials",
                 params={"q": query, "type": "ws", "limit": 5},
                 timeout=5,
@@ -606,7 +676,7 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
             print(f"[GeoGebra] Error: {e}")
         return None
 
-    for i, slide in enumerate(slides):
+    async def process_slide_image(i: int, slide: dict, client: httpx.AsyncClient) -> dict:
         commons_queries = slide.pop("commons_queries", [])
         if isinstance(commons_queries, str):
             commons_queries = [commons_queries]
@@ -618,15 +688,22 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
         if i < len(extracted_image_urls):
             slide["diagram_image_url"] = extracted_image_urls[i]
         else:
-            candidates = fetch_svg_candidates(commons_queries) if commons_queries else []
-            url = select_best_image(candidates, slide.get("title", ""), slide.get("keywords", []))
+            candidates = await fetch_svg_candidates_async(commons_queries, client) if commons_queries else []
+            url = await select_best_image_async(candidates, slide.get("title", ""), slide.get("keywords", []), client)
             if not url:
-                url = get_geogebra_image(geogebra_query) if geogebra_query else None
+                url = await get_geogebra_image_async(geogebra_query, client) if geogebra_query else None
             slide["diagram_image_url"] = url
+        return slide
+
+    async with httpx.AsyncClient() as http_client:
+        slides = list(await asyncio.gather(*[
+            process_slide_image(i, slide, http_client)
+            for i, slide in enumerate(slides)
+        ]))
 
     session_context["slideshow"] = slides
 
-    # Generate narrator context for ElevenLabs slideshow agent
+    # ── 5. NARRATOR CONTEXT + PRACTICE PROBLEMS IN PARALLEL ──────────────
     slides_text = "\n\n".join([
         f"SLIDE {i+1} — {s.get('title', '')}\nSubtitle: {s.get('subtitle', '')}\nScript: {s.get('script', '')}"
         for i, s in enumerate(slides)
@@ -667,26 +744,8 @@ Lecture transcript excerpt:
 {transcript_for_narrator}
 
 Write the complete narrator briefing now. It will be injected directly into the live voice agent."""
-    try:
-        narrator_resp = model.generate_content(narrator_prompt)
-        session_context["narrator_context"] = narrator_resp.text.strip()
-    except Exception as e:
-        print(f"[Narrator Context] Error: {e}")
-        session_context["narrator_context"] = (
-            "You are a slideshow narrator. Do not greet. Begin reading Slide 1 immediately. "
-            + " | ".join([f"Slide {i+1}: {s.get('script', '')}" for i, s in enumerate(slides)])
-            + " After each script, wait silently. If interrupted with a question, answer using only these slide scripts and uploaded notes. "
-            + "If the student is still confused, explain the same idea a different way with a simple example. "
-            + "After a short silence, ask exactly 'Are you ready to move on?'. "
-            + "If not covered by the provided material, say that directly and point to the closest related slide."
-        )
 
-    # Update whiteboard tutor context from uploaded material
-    if uploaded_file_summaries:
-        session_context["file_summaries"] = uploaded_file_summaries
-        session_context["last_analysis"] = None  # reset for new material
-
-        practice_prompt = f"""You are creating 3 practice problems for a student to solve step-by-step on a whiteboard.
+    practice_prompt = f"""You are creating 3 practice problems for a student to solve step-by-step on a whiteboard.
 
 Based ONLY on the concepts in these course notes, write 3 challenging but solvable problems that gradually increase in difficulty.
 
@@ -696,26 +755,57 @@ COURSE NOTES:
 Requirements:
 - The problems must be directly grounded in concepts from the notes above.
 - They should require showing clear step-by-step work.
-- Write in plain spoken English. No LaTeX, no dollar signs, no backslashes.
-  Use words: "the integral of", "x squared", "from 0 to 4", etc.
-- Return ONLY a valid JSON array of exactly 3 plain-text strings. No markdown, no labels, no preamble."""
+- Put every mathematical expression in inline LaTeX with single-dollar delimiters.
+- Use standard calculus notation in LaTeX (for example: $\\int_a^b f(x)\\,dx$, $x^2$, $\\Delta x$, $x_i$, $\\lim_{{n \\to \\infty}}$, $\\sum_{{i=1}}^n i$).
+- Never write prose-math like "integral from ... to ..." or "Sigma from ... to ...".
+- In JSON strings, escape backslashes correctly (e.g. "\\\\int", "\\\\sum", "\\\\Delta").
+- Return ONLY a valid JSON array of exactly 3 strings. No markdown, no labels, no preamble."""
 
+    async def gen_narrator_ctx():
         try:
-            practice_resp = model.generate_content(practice_prompt)
-            print("Raw response:", practice_resp.text)
-            text = practice_resp.text.strip()
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-            practice_problems = json.loads(text)
+            resp = await asyncio.to_thread(model.generate_content, narrator_prompt)
+            return resp.text.strip()
+        except Exception as e:
+            print(f"[Narrator Context] Error: {e}")
+            return (
+                "You are a slideshow narrator. Do not greet. Begin reading Slide 1 immediately. "
+                + " | ".join([f"Slide {i+1}: {s.get('script', '')}" for i, s in enumerate(slides)])
+                + " After each script, wait silently. If interrupted, answer from the slide scripts only. "
+                + "If still confused, re-explain differently with a simple example. "
+                + "After silence, ask exactly 'Are you ready to move on?'."
+            )
+
+    async def gen_practice_problems():
+        if not uploaded_file_summaries:
+            return None
+        try:
+            resp = await asyncio.to_thread(model.generate_content, practice_prompt)
+            print("Raw response:", resp.text)
+            raw = extract_json_text(resp.text)
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return normalize_problem_list(parsed)[:3]
+            return None
+        except Exception as e:
+            print(f"[Whiteboard] Could not generate practice problems: {e}")
+            return None
+
+    narrator_text, practice_problems = await asyncio.gather(
+        gen_narrator_ctx(),
+        gen_practice_problems(),
+    )
+
+    session_context["narrator_context"] = narrator_text
+
+    if uploaded_file_summaries:
+        session_context["file_summaries"] = uploaded_file_summaries
+        session_context["last_analysis"] = None
+        if practice_problems and isinstance(practice_problems, list):
             session_context["practice_problems"] = practice_problems
             session_context["current_problem_index"] = 0
             if practice_problems:
                 session_context["current_problem"] = practice_problems[0]
             print(f"[Whiteboard] Generated {len(practice_problems)} practice problems.")
-        except Exception as e:
-            print(f"[Whiteboard] Could not generate practice problems: {e}")
 
     lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson
