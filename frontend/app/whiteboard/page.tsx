@@ -9,75 +9,74 @@ import LatexRenderer from '@/components/LatexRenderer'
 import confetti from 'canvas-confetti'
 import { useConversation } from '@elevenlabs/react'
 
-function normalizeProblemMath(text: string): string {
+export function normalizeProblemMath(text: string): string {
   if (!text) return text
 
-  const wrapExpr = (expr: string) => {
-    const cleaned = expr.trim().replace(/\s*dx\s*$/i, '')
-    if (/^\(.+\)$/.test(cleaned)) {
-      return cleaned
-    }
-    return `(${cleaned})`
-  }
-
-  const latexPattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g
+  // ── 1. Mask existing LaTeX so we never modify it ──────────────────
+  const latexPattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/g
   const latexBlocks: string[] = []
   let masked = text.replace(latexPattern, (m) => {
-    const token = `__LATEX_BLOCK_${latexBlocks.length}__`
+    const token = `\x00LATEX${latexBlocks.length}\x00`
     latexBlocks.push(m)
     return token
   })
 
-  let normalized = masked
+  // ── 2. Normalise symbolic integral character ──────────────────────
+  masked = masked
     .replace(/\[\s*integral symbol\s*\]/gi, '∫')
     .replace(/\bintegral symbol\b/gi, '∫')
 
-  // Handle mixed phrasing like: "integral of ∫(2x+3)dx from 0 to 4"
-  normalized = normalized.replace(
-    /\bintegral\s+of\s*∫?\s*(.+?)\s*dx\s*from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
-    (_, expr: string, lower: string, upper: string) =>
-      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  // Helper: ensure expression is parenthesised
+  const wrapExpr = (expr: string) => {
+    const cleaned = expr.trim().replace(/\s*dx\s*$/i, '').trim()
+    return /^\(.+\)$/.test(cleaned) ? cleaned : `(${cleaned})`
+  }
+
+  // ── 3. Prose integrals → LaTeX ────────────────────────────────────
+
+  // "integral of ∫(2x+3)dx from 0 to 4"  (mixed prose + symbol)
+  masked = masked.replace(
+    /\bintegral\s+of\s*∫?\s*(.+?)\s*dx\s+from\s+(\S+)\s+to\s+(\S+)/gi,
+    (_, expr, lo, hi) => `$\\int_{${lo}}^{${hi}} ${wrapExpr(expr)}\\,dx$`
   )
 
-  normalized = normalized.replace(
-    /\b(?:the\s+)?definite\s+integral\s+of\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
-    (_, expr: string, lower: string, upper: string) =>
-      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  // "definite integral of ... from ... to ..."
+  masked = masked.replace(
+    /\b(?:the\s+)?definite\s+integral\s+of\s+(.+?)\s+from\s+(\S+)\s+to\s+(\S+)/gi,
+    (_, expr, lo, hi) => `$\\int_{${lo}}^{${hi}} ${wrapExpr(expr)}\\,dx$`
   )
 
-  normalized = normalized.replace(
+  // "∫(2x+3)dx from 0 to 4" (symbol only, no prose prefix)
+  masked = masked.replace(
+    /∫\s*(.+?)\s*dx\s+from\s+(\S+)\s+to\s+(\S+)/gi,
+    (_, expr, lo, hi) => `$\\int_{${lo}}^{${hi}} ${wrapExpr(expr)}\\,dx$`
+  )
+
+  // "integral of f(x)" (indefinite, no bounds)
+  masked = masked.replace(
     /\b(?:the\s+)?integral\s+of\s+(.+?)(?=[,.;!?]|$)/gi,
-    (_, expr: string) => `$\\int ${wrapExpr(expr)}\\,dx$`
+    (_, expr) => `$\\int ${wrapExpr(expr)}\\,dx$`
   )
 
-  // Handle already symbolic integral with bounds written in words:
-  // "∫(2x+3)dx from 0 to 4" -> "\int_0^4 (2x+3)\,dx"
-  normalized = normalized.replace(
-    /∫\s*(.+?)\s*dx\s*from\s+(.+?)\s+to\s+(.+?)(?=[,.;!?]|$)/gi,
-    (_, expr: string, lower: string, upper: string) =>
-      `$\\int_{${lower.trim()}}^{${upper.trim()}} ${wrapExpr(expr)}\\,dx$`
+  // ── 4. Caret exponents (x^2 → $x^{2}$)  — ONE pass only ─────────
+  // Skip anything already inside a LaTeX block (starts with \x00) or
+  // preceded by \ or $.
+  masked = masked.replace(
+    /(^|[^\\$\x00])([A-Za-z])\s*\^\s*(-?\d+)\b/gm,
+    (_, prefix, base, exp) => `${prefix}$${base}^{${exp}}$`
   )
 
-  // Render caret exponents as math superscripts in display text (e.g. x^2, t^-1).
-  // Handles optional spaces around ^ and supports single-letter variable bases.
-  normalized = normalized.replace(
-    /(^|[^\\$])([A-Za-z])\s*\^\s*(-?\d+)\b/g,
-    (_, prefix: string, base: string, exp: string) => `${prefix}$${base}^{${exp}}$`
-  )
+  // ── 5. Restore masked LaTeX blocks ────────────────────────────────
+  let result = masked.replace(/\x00LATEX(\d+)\x00/g, (_, idx) => latexBlocks[Number(idx)] ?? '')
 
-  // Restore original LaTeX segments untouched.
-  normalized = normalized.replace(/__LATEX_BLOCK_(\d+)__/g, (_, idx: string) => {
-    const block = latexBlocks[Number(idx)]
-    return block ?? ''
-  })
+  // ── 6. Cleanup pass: fix accidental adjacent / nested $$ ──────────
+  // Merge "$...$  $...$" that sit right next to each other into one block
+  // and collapse "$$" inside inline math.
+  result = result
+    .replace(/\$\s*\$/g, ' ')          // empty $$ pairs → space
+    .replace(/\${3,}/g, '$$')           // $$$ or more → $$
 
-  // Catch any remaining plain-text exponents introduced after restore.
-  normalized = normalized.replace(
-    /\b([A-Za-z])\s*\^\s*(-?\d+)\b/g,
-    (_, base: string, exp: string) => `$${base}^{${exp}}$`
-  )
-
-  return normalized
+  return result
 }
 
 function applySmartLineBreaks(text: string): string {
@@ -231,7 +230,7 @@ CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students n
   const proceedToNext = async () => {
     setShowNextConfirm(false)
     setHasSolvedCurrent(false)
-    
+
     // If we're on the last problem, complete the session
     if (sessionData && sessionData.current_problem_index === sessionData.practice_problems.length - 1) {
       triggerSessionComplete()
@@ -366,7 +365,7 @@ ${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}
 Use this context to understand what is currently on the board if the student talks about their work.`
 
       let aiInstruction = "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually."
-      
+
       if (result.isSolved) {
         aiInstruction = "\n\nINSTRUCTION: INCREDIBLE! The student has just successfully SOLVED the entire problem and got the final correct answer! You must immediately and enthusiastically congratulate them by name or say 'Congrats you got the correct answer!' Celebrate this victory!"
       } else if (result.hasMistake) {
@@ -574,13 +573,12 @@ Use this context to understand what is currently on the board if the student tal
             ))}
 
             {feedback && (
-              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
-                feedback.hasMistake
-                  ? 'bg-red-50 border-[#D93D3D]/50 text-[#D93D3D]'
-                  : feedback.isSolved
+              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${feedback.hasMistake
+                ? 'bg-red-50 border-[#D93D3D]/50 text-[#D93D3D]'
+                : feedback.isSolved
                   ? 'bg-green-50 border-[#428751]/50 text-[#428751]'
                   : 'bg-white border-[#E0D5C5] text-[#3D2F1E]'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-3">
                   {feedback.hasMistake ? (
                     <AlertCircle className="w-5 h-5 shrink-0 text-[#D93D3D]" />
@@ -590,9 +588,8 @@ Use this context to understand what is currently on the board if the student tal
                     <MessageSquare className="w-5 h-5 shrink-0 text-[#8B7355]" />
                   )}
                   <div>
-                    <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-80 ${
-                      feedback.hasMistake ? 'text-[#D93D3D]' : feedback.isSolved ? 'text-[#428751]' : 'text-[#8B7355]'
-                    }`}>
+                    <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-80 ${feedback.hasMistake ? 'text-[#D93D3D]' : feedback.isSolved ? 'text-[#428751]' : 'text-[#8B7355]'
+                      }`}>
                       {feedback.hasMistake ? 'Mistake Spotted' : feedback.isSolved ? 'Correct Answer!' : 'Observation'}
                     </p>
                     <p className="text-sm leading-relaxed text-[#3D2F1E]">{feedback.feedback}</p>
