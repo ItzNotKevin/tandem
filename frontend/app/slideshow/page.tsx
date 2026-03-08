@@ -128,6 +128,13 @@ const hardcodedSlides: Slide[] = [
     theorem: { label: 'Theorem', formula: '' },
   },
   {
+    title: 'Linear Functions',
+    subtitle: 'Constant slope, constant derivative',
+    diagram: <DerivativeDiagram />,
+    keywords: ['Slope', 'y-intercept', 'Constant rate of change'],
+    theorem: { label: 'Theorem', formula: '' },
+  },
+  {
     title: 'Power Rule',
     subtitle: 'The most used rule in differentiation',
     diagram: <PowerRuleDiagram />,
@@ -567,17 +574,23 @@ export default function SlideshowPage() {
                 />
               ) : current === 2 ? (
                 <img
+                  src="/linear_function.png"
+                  alt="Linear Function Graph"
+                  className="w-full h-full object-contain rounded-xl mix-blend-multiply"
+                />
+              ) : current === 3 ? (
+                <img
                   src="/power_rule_example.png"
                   alt="Power Rule Example"
                   className="w-full h-full object-contain rounded-xl mix-blend-multiply"
                 />
-              ) : current === 3 ? (
+              ) : current === 4 ? (
                 <img
                   src="/power_rule_graph.png"
                   alt="Power Rule Graph"
                   className="w-full h-full object-contain rounded-xl mix-blend-multiply"
                 />
-              ) : current === 4 ? (
+              ) : current === 5 ? (
                 <img
                   src="/power_rule_example_2.png"
                   alt="Power Rule Example 2"
