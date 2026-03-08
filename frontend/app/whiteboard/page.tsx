@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
 import BrandLogo from '@/components/BrandLogo'
-import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff } from 'lucide-react'
+import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp } from 'lucide-react'
 import { useConversation } from '@elevenlabs/react'
 
 export default function WhiteboardPage() {
@@ -13,6 +13,7 @@ export default function WhiteboardPage() {
   const [feedback, setFeedback] = useState<AnalysisResponse | null>(null)
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
   const [currentQuestion, setCurrentQuestion] = useState("What are we working on today?")
+  const [isProblemOpen, setIsProblemOpen] = useState(true)
   const [sessionData, setSessionData] = useState<any>(null)
   const sessionRef = useRef<any>(null)
   // Queue: stores whiteboard analysis if Artie wasn't connected when it arrived
@@ -23,7 +24,14 @@ export default function WhiteboardPage() {
   const sendUpdateRef = useRef<((text: string) => void) | null>(null)
   // Prevents sending duplicate identical snapshots to Gemini
   const lastSnapshotRef = useRef<string | null>(null)
-  
+
+  const transcriptEndRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll transcript to bottom
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [transcript, feedback])
+
   // Fetch session context on mount
   useEffect(() => {
     const fetchSession = async () => {
@@ -48,7 +56,7 @@ export default function WhiteboardPage() {
       console.log('Connected to ElevenLabs')
       const currentData = sessionRef.current
       if (currentData) {
-        const fileContext = currentData.file_summaries.map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
+        const fileContext = (currentData.file_summaries || []).map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
         const fullContext = `Context: The student is working on the problem: "${currentData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
         console.log('Sending initial context to Artie:', fullContext)
         conversation.sendContextualUpdate(fullContext)
@@ -61,22 +69,17 @@ export default function WhiteboardPage() {
         const sanitizedText = message.message.replace(/\[.*?\]/g, '').trim()
         setTranscript(prev => [...prev, { role: 'agent', text: sanitizedText }])
       } else if (message.source === 'user' && message.message) {
-        const text = message.message.trim()
-        // Filter VAD noise: '...', blank, very short clips, or all-punctuation
-        // ElevenLabs emits these when it detects ambient sound but no real speech
-        const isNoise = !text || text.length <= 3 || /^[.\s\u2026!?]+$/.test(text)
-
-        // Hide noise AND internal system prompts from the visible chat transcript
-        if (!isNoise && !text.includes('[WHITEBOARD UPDATE')) {
-          setTranscript(prev => [...prev, { role: 'user', text }])
+        // Hide our internal system prompts from the visible chat transcript
+        if (!message.message.includes('[WHITEBOARD UPDATE') && !message.message.includes('[CURRENT WHITEBOARD STATE')) {
+          setTranscript(prev => [...prev, { role: 'user', text: message.message }])
         }
 
-        // Only re-inject whiteboard context when student actually said something real
-        if (!isNoise) {
-          const latest = latestAnalysisRef.current
-          if (latest && sendUpdateRef.current) {
-            sendUpdateRef.current(latest)
-          }
+        // Re-inject latest whiteboard state right before Artie responds
+        // This is the KEY fix: sendContextualUpdate is dropped while Artie speaks,
+        // so we re-send on every user turn to guarantee fresh whiteboard context
+        const latest = latestAnalysisRef.current
+        if (latest && sendUpdateRef.current) {
+          sendUpdateRef.current(latest)
         }
       }
     },
@@ -117,8 +120,7 @@ TUTORING RULES — follow these strictly at all times:
 4. If they made a mistake, point out WHERE the error is and ask THEM how they'd fix it — don't fix it for them.
 5. Praise effort and partial progress genuinely.
 6. Your goal is for the student to discover the answer themselves with your guidance.
-7. SILENCE = DO NOTHING: If the student is quiet, DO NOT speak at all. Do not say "are you still there?", "take your time", "I'm right here", or any filler phrase. Say absolutely nothing until the student speaks meaningfully or a [WHITEBOARD UPDATE] arrives. Silence means they are thinking or writing.
-8. FILLER WORDS: If the student says a short filler ("mm", "uh", "okay", "yeah"), give at most one brief word of acknowledgment, then go silent.
+7. PATIENCE DURING SILENCE: If the student is quiet, assume they are thinking or writing on the whiteboard. DO NOT ask "Are you still there?" or interrupt their silence. Wait patiently for them to speak or for a [WHITEBOARD UPDATE].
 
 Greet the student, mention the specific problem, and ask them where they'd like to start.`
       sendContextualUpdate(fullContext)
@@ -131,7 +133,7 @@ Greet the student, mention the specific problem, and ask them where they'd like 
       setTimeout(() => sendContextualUpdate(pending), 1500)
     }
   }, [isConnected]) // eslint-disable-line react-hooks/exhaustive-deps
-  
+
   const toggleVoice = useCallback(async () => {
     if (isConnected) {
       await conversation.endSession()
@@ -169,37 +171,34 @@ Greet the student, mention the specific problem, and ask them where they'd like 
       console.log('Skipping analysis: Whiteboard unchanged.')
       return
     }
-    
+
     lastSnapshotRef.current = snapshot.base64
     setIsAnalyzing(true)
     try {
       const result = await analyzeWhiteboard(snapshot.base64, currentQuestion)
       setFeedback(result)
 
-      // Build a priority interrupt — Gemini's spoken response IS Artie's voice output
-      // The spokenResponse field is already Socratic, speech-optimized, and context-aware
-      const spoken = (result as any).spokenResponse || result.feedback
       const status = result.hasMistake ? '⚠️ MISTAKE DETECTED' : '✅ ON TRACK'
-      const richUpdate = `[WHITEBOARD UPDATE — PRIORITY INTERRUPT]
+      const observation = `[WHITEBOARD UPDATE]
+STATUS: ${status}
+VISUAL ANALYSIS: ${result.feedback}
+${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}`
+
+      // Always store the background visual context for regular chit-chat
+      latestAnalysisRef.current = `[CURRENT WHITEBOARD STATE (Background Data)]
 STATUS: ${status}
 VISUAL ANALYSIS: ${result.feedback}
 ${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}
-
-REQUIRED RESPONSE — say this verbatim right now, do not deviate:
-"${spoken}"
-
-After saying this, wait for the student to respond. Do not add extra information or give the answer.`
-
-      // Always store the latest analysis — re-injected every time the student speaks
-      latestAnalysisRef.current = richUpdate
+Use this context to understand what is currently on the board if the student talks about their work.`
 
       if (isConnected) {
-        // By sending this via sendUserMessage, it simulates user text input, 
-        // which completely interrupts Artie mid-sentence and forces him to reply instantly.
-        sendUserMessage(richUpdate)
+        // We interrupt Artie by sending the visual observation as a system event.
+        // Because ElevenLabs is the main conversational LLM, it will naturally 
+        // halt its current output, process this new information, and dynamically pivot!
+        sendUserMessage(observation + "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually.")
       } else {
         // Artie offline — queue for next connection
-        pendingObservationRef.current = richUpdate
+        pendingObservationRef.current = observation + "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually."
         console.log('Artie offline — observation queued for next connection.')
       }
 
@@ -232,26 +231,76 @@ After saying this, wait for the student to respond. Do not add extra information
           )}
         </div>
 
-        <TldrawBoard 
-          ref={boardRef} 
-          onStrokeEnd={handleStrokeEnd} 
-          strokeEndDebounceMs={500} 
+        <TldrawBoard
+          ref={boardRef}
+          onStrokeEnd={handleStrokeEnd}
+          strokeEndDebounceMs={500}
         />
       </div>
 
       {/* Right Sidebar */}
       <div className="w-[350px] border-l border-[#E0D5C5] flex flex-col bg-[#F6F4EE]">
-        <div className="px-6 pt-5 pb-4 border-b border-[#E0D5C5] bg-[#FAF6EF]">
-          <BrandLogo className="w-28" />
+        <div className="px-6 py-1.5 border-b border-[#E0D5C5] bg-[#FAF6EF]">
+          <BrandLogo className="w-20" />
         </div>
 
         {/* Question Box */}
-        <div className="p-6 bg-[#FAF6EF] border-b border-[#E0D5C5]">
-          <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em] mb-4">Current Problem</h2>
-          <div className="p-5 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm text-center">
-            <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic">
-              "{currentQuestion}"
-            </p>
+        <div className="bg-[#FAF6EF] border-b border-[#E0D5C5]">
+          <button 
+            onClick={() => setIsProblemOpen(!isProblemOpen)}
+            className="w-full flex items-center justify-between px-6 py-4 hover:bg-[#E0D5C5]/20 transition-colors"
+          >
+            <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em]">
+              Current Problem {sessionData?.practice_problems && sessionData.practice_problems.length > 0 ? `(${sessionData.current_problem_index + 1} of ${sessionData.practice_problems.length})` : ''}
+            </h2>
+            {isProblemOpen ? (
+              <ChevronUp className="w-4 h-4 text-[#8B7355] opacity-60" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-[#8B7355] opacity-60" />
+            )}
+          </button>
+          
+          <div 
+            className={`px-6 overflow-hidden transition-all duration-300 ease-in-out ${
+              isProblemOpen ? 'max-h-[500px] pb-6 opacity-100' : 'max-h-0 pb-0 opacity-0'
+            }`}
+          >
+            <div className="p-5 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm text-center">
+              <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic">
+                "{currentQuestion}"
+              </p>
+            </div>
+            
+            {sessionData?.practice_problems && sessionData.practice_problems.length > 1 && (
+              <div className="mt-4 flex gap-3">
+                <button 
+                  disabled={sessionData.current_problem_index === 0}
+                  onClick={async () => {
+                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/prev`, { method: 'POST' })
+                    const data = await res.json()
+                    setCurrentQuestion(data.current_problem)
+                    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+                    if (isConnected) sendContextualUpdate(`The student has moved BACK to a previous problem: "${data.current_problem}". Please help them with this one now.`)
+                  }}
+                  className="flex-1 py-2 px-3 text-[10px] font-black text-[#8B7355] uppercase tracking-wider border border-[#E0D5C5] rounded-xl hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                >
+                  Previous
+                </button>
+                <button 
+                  disabled={sessionData.current_problem_index === sessionData.practice_problems.length - 1}
+                  onClick={async () => {
+                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/next`, { method: 'POST' })
+                    const data = await res.json()
+                    setCurrentQuestion(data.current_problem)
+                    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+                    if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
+                  }}
+                  className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#D93D3D] hover:bg-[#c13636] uppercase tracking-wider rounded-xl disabled:opacity-30 disabled:hover:bg-[#D93D3D] transition-all shadow-sm"
+                >
+                  Next Problem
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -266,16 +315,15 @@ After saying this, wait for the student to respond. Do not add extra information
                 </p>
               </div>
             )}
-            
+
             {/* Transcript Messages */}
             {transcript.map((msg, idx) => (
-              <div 
-                key={idx} 
-                className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${ 
-                  msg.role === 'agent' 
-                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] mr-4' 
+              <div
+                key={idx}
+                className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${msg.role === 'agent'
+                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] mr-4'
                     : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] ml-4 border-dashed opacity-80 self-end'
-                }`}
+                  }`}
               >
                 <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                   <span className={`text-[10px] font-bold uppercase tracking-widest ${msg.role === 'agent' ? 'text-[#D93D3D]' : 'text-[#8B7355]'}`}>
@@ -287,43 +335,41 @@ After saying this, wait for the student to respond. Do not add extra information
             ))}
 
             {feedback && (
-              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
-                feedback.hasMistake 
-                  ? 'bg-white border-[#D93D3D] text-[#D93D3D]' 
+              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${feedback.hasMistake
+                  ? 'bg-white border-[#D93D3D] text-[#D93D3D]'
                   : 'bg-white border-[#E0D5C5] text-[#3D2F1E]'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-3">
                   <MessageSquare className={`w-5 h-5 shrink-0 ${feedback.hasMistake ? 'text-[#D93D3D]' : 'text-[#D93D3D]'}`} />
                   <div>
                     <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-60 ${feedback.hasMistake ? 'text-[#D93D3D]' : ''}`}>
-                       {feedback.hasMistake ? 'Mistake Spotted' : 'Observation'}
+                      {feedback.hasMistake ? 'Mistake Spotted' : 'Observation'}
                     </p>
                     <p className="text-sm leading-relaxed">{feedback.feedback}</p>
                   </div>
                 </div>
               </div>
             )}
+            <div ref={transcriptEndRef} />
           </div>
 
           {/* Unified Artie Panel — replaces floating mic button */}
           <button
             onClick={toggleVoice}
             disabled={status === 'connecting'}
-            className={`w-full rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${
-              isConnected
+            className={`w-full rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${isConnected
                 ? isSpeaking
                   ? 'bg-[#D93D3D] border-[#D93D3D]'
                   : 'bg-white border-[#D93D3D]'
                 : status === 'connecting'
                   ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
                   : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-4 p-4">
               {/* Icon */}
-              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-                isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
-              }`}>
+              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
+                }`}>
                 {status === 'connecting' ? (
                   <Loader2 className="w-5 h-5 text-[#8B7355] animate-spin" />
                 ) : isConnected ? (
@@ -339,17 +385,15 @@ After saying this, wait for the student to respond. Do not add extra information
 
               {/* Text */}
               <div className="text-left">
-                <p className={`text-[10px] font-black uppercase tracking-widest ${
-                  isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8B7355]'
-                }`}>
+                <p className={`text-[10px] font-black uppercase tracking-widest ${isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8B7355]'
+                  }`}>
                   {status === 'connecting' ? 'Connecting...'
                     : isConnected
                       ? (isSpeaking ? 'Artie is Speaking' : 'Artie is Listening')
                       : 'Start Tutor Conversation'}
                 </p>
-                <p className={`text-xs mt-0.5 ${
-                  isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8B7355]') : 'text-[#A08060]'
-                }`}>
+                <p className={`text-xs mt-0.5 ${isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8B7355]') : 'text-[#A08060]'
+                  }`}>
                   {status === 'connecting' ? 'Please wait...'
                     : isConnected
                       ? 'Click to end session'

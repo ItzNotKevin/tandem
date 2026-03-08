@@ -35,6 +35,12 @@ session_content: dict = {
 
 session_context: dict = {
     # ── TEST DATA ── Remove before production ──────────────────────────────
+    "practice_problems": [
+        "Evaluate the integral ∫(2x + 3) dx from 0 to 4, and verify your answer.",
+        "Find the area under f(x) = x² from x=1 to x=3.",
+        "Solve the word problem: A car's velocity is v(t) = 3t^2. How far does it travel in the first 2 seconds?"
+    ],
+    "current_problem_index": 0,
     "current_problem": "Evaluate the integral ∫(2x + 3) dx from 0 to 4, and verify your answer.",
     "file_summaries": [
         {
@@ -169,6 +175,24 @@ async def generate_problem(request: Request):
         return result
     except Exception as e:
         return {"error": str(e)}
+
+@app.post("/problem/next")
+async def next_problem():
+    problems = session_context.get("practice_problems", [])
+    idx = session_context.get("current_problem_index", 0)
+    if idx + 1 < len(problems):
+        session_context["current_problem_index"] = idx + 1
+        session_context["current_problem"] = problems[idx + 1]
+    return {"current_problem": session_context["current_problem"], "current_problem_index": session_context["current_problem_index"], "total": len(problems)}
+
+@app.post("/problem/prev")
+async def prev_problem():
+    problems = session_context.get("practice_problems", [])
+    idx = session_context.get("current_problem_index", 0)
+    if idx - 1 >= 0:
+        session_context["current_problem_index"] = idx - 1
+        session_context["current_problem"] = problems[idx - 1]
+    return {"current_problem": session_context["current_problem"], "current_problem_index": session_context["current_problem_index"], "total": len(problems)}
 
 class SlideshowGenerateRequest(BaseModel):
     prompt: str
@@ -578,27 +602,36 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
         session_context["file_summaries"] = uploaded_file_summaries
         session_context["last_analysis"] = None  # reset for new material
 
-        practice_prompt = f"""You are creating one practice problem for a student to solve step-by-step on a whiteboard.
+        practice_prompt = f"""You are creating 3 practice problems for a student to solve step-by-step on a whiteboard.
 
-Based ONLY on the concepts in these course notes, write ONE challenging but solvable problem.
+Based ONLY on the concepts in these course notes, write 3 challenging but solvable problems that gradually increase in difficulty.
 
 COURSE NOTES:
 {extracted_text[:3000]}
 
 Requirements:
-- The problem must be directly grounded in a concept from the notes above.
-- It should require showing clear step-by-step work.
+- The problems must be directly grounded in concepts from the notes above.
+- They should require showing clear step-by-step work.
 - Write in plain spoken English. No LaTeX, no dollar signs, no backslashes.
   Use words: "the integral of", "x squared", "from 0 to 4", etc.
-- Return ONLY the problem statement as a single plain-text sentence or two. No labels, no preamble."""
+- Return ONLY a valid JSON array of exactly 3 plain-text strings. No markdown, no labels, no preamble."""
 
         try:
             practice_resp = model.generate_content(practice_prompt)
-            practice_problem = practice_resp.text.strip()
-            session_context["current_problem"] = practice_problem
-            print(f"[Whiteboard] Practice problem: {practice_problem[:100]}...")
+            print("Raw response:", practice_resp.text)
+            text = practice_resp.text.strip()
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            practice_problems = json.loads(text)
+            session_context["practice_problems"] = practice_problems
+            session_context["current_problem_index"] = 0
+            if practice_problems:
+                session_context["current_problem"] = practice_problems[0]
+            print(f"[Whiteboard] Generated {len(practice_problems)} practice problems.")
         except Exception as e:
-            print(f"[Whiteboard] Could not generate practice problem: {e}")
+            print(f"[Whiteboard] Could not generate practice problems: {e}")
 
     lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson
