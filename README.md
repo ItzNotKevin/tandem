@@ -1,66 +1,94 @@
 # Tandem
-Tandem is an AI learning app that turns your lecture material into an interactive study session.
+Tandem is an AI-powered lecture companion that converts raw class input into a structured study session and guided problem-solving flow.
 
-Built for HackCanada, it helps students go from passive notes to active problem-solving.
+It helps students transition from passive note taking, to actual problem solving and memorization.
 
-## What Tandem Does
-1. You upload class material (PDF/image) and optionally record your own explanation.
-2. Tandem extracts key concepts and generates a clean slideshow lesson.
-3. You move into a whiteboard mode and solve a practice problem.
-4. An AI tutor gives live guidance (Socratic style) instead of giving away the answer.
-5. Engagement tracking helps the system detect focus lapses during recording.
+## Product Overview
+Most students can collect notes, but still struggle to turn those notes into understanding they can apply under pressure.  
+Tandem is designed to bridge that gap with a single workflow:
 
-## Why It Exists
-Most tools summarize content, but students still get stuck when applying it.
-Tandem focuses on the "last mile": guided practice, feedback, and active learning.
+1. Ingest lecture material (PDFs/images) and lecture audio.
+2. Extract key concepts and generate a focused lesson slideshow.
+3. Move into an interactive whiteboard stage for active practice.
+4. Receive tutor-style guidance that nudges the student to think, not just copy answers.
+
+## What Tandem Actually Records
+Tandem records and transcribes **lecture audio** for study context.  
+It does **not** record the student as a video lecture.
+
+The engagement module may access camera input locally for attention signals during a session, but the core lesson-generation recording flow is lecture audio + uploaded materials.
+
+## Core Experience
+### 1) Session Setup (`/record`)
+- Upload supporting files (PDF, PNG, JPG).
+- Record lecture audio clips.
+- Transcribe clips and combine transcript + file content into one learning context.
+- Track engagement signals while the session is active.
+
+### 2) Lesson Generation (`/api/generate-lesson` -> backend)
+- Backend extracts text from uploads.
+- Gemini generates a structured slide set (titles, keywords, formulas, diagram search hints).
+- Relevant diagram images are selected and attached.
+- Output is saved as slideshow session context.
+
+### 3) Slideshow Learning (`/slideshow`)
+- Student reviews AI-generated concept slides.
+- Each slide emphasizes concise explanations, key points, and formulas.
+- Flow moves directly into problem-solving mode.
+
+### 4) Whiteboard Tutoring (`/whiteboard`)
+- Student writes out steps in a whiteboard UI.
+- Backend analyzes whiteboard snapshots.
+- Tutor responds in a Socratic style (ask guiding questions, identify mistakes, avoid giving final answer directly).
 
 ## Main Features
-- AI-generated lesson slides from uploaded material + transcript
-- Voice-assisted whiteboard tutor for step-by-step coaching
-- Engagement tracking during recording (MediaPipe-based)
-- Session context carried across record -> slideshow -> whiteboard
+- AI lesson generation from mixed inputs (docs + lecture audio transcript)
+- Whiteboard-first guided tutoring loop
+- Formula rendering support for math-heavy content
+- Engagement signal tracking integrated into session context
+- Persistent cross-stage context from record -> slideshow -> whiteboard
 
 ## Tech Stack
 - Frontend: Next.js, React, Tailwind
 - Backend: FastAPI (Python)
-- AI: Vertex AI Gemini + Imagen
-- Speech: ElevenLabs
-- Vision/Engagement: MediaPipe Face Landmarker
+- AI Models: Vertex AI Gemini + Imagen
+- Speech/Transcription: ElevenLabs
+- Engagement Signals: MediaPipe Face Landmarker
 
 ## Project Structure
-- `frontend/`: UI, API proxy routes, pages (`/record`, `/slideshow`, `/whiteboard`)
-- `backend/`: lesson generation, whiteboard analysis, transcription, engagement endpoints
+- `frontend/`: app pages, API proxy routes, UI components
+- `backend/`: lesson generation, transcription, whiteboard analysis, engagement endpoints
 
 ## Local Setup
-### 1) Backend
+### Backend
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### 2) Frontend
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
+Frontend: `http://localhost:3000`  
+Backend: `http://localhost:8000`
+
 ## Environment Variables
-Backend expects AI/speech config (for example):
+Backend (required for AI/speech paths):
 - `VERTEX_PROJECT`
 - `VERTEX_LOCATION`
 - `ELEVEN_LABS_API_KEY`
 
-Frontend uses:
-- `BACKEND_URL` (defaults to `http://localhost:8000`)
+Frontend:
+- `BACKEND_URL` (default: `http://localhost:8000`)
 
-## Demo Flow (Judge-Friendly)
-1. Open landing page and click **Start Session**
-2. Upload a PDF/image and record a short explanation
+## Demo Walkthrough
+1. Click **Start Session**
+2. Upload lecture material and record lecture audio
 3. Click **Generate Lesson**
-4. Walk through generated slides
-5. Continue to whiteboard and interact with the tutor
-
-## Status
-Active hackathon prototype with end-to-end flow working locally.
+4. Review slides and proceed to whiteboard
+5. Solve with tutor guidance and feedback
