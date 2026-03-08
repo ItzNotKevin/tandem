@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
-import os, base64, json, asyncio, uuid, requests as req_lib
+import os, base64, json, asyncio, uuid, requests as req_lib, re
 import websockets as ws_lib
 from dotenv import load_dotenv
 import vertexai
@@ -30,6 +30,7 @@ session_content: dict = {
     "transcript": "",
     "lesson": None,
     "images": [],
+    "engagement_events": [],
 }
 
 session_context: dict = {
@@ -284,6 +285,7 @@ async def generate_lesson(
     files: List[UploadFile] = File(default=[]),
     transcript: str = Form(""),
 ):
+  try:
     all_text_parts = []
     image_files = []
 
@@ -327,7 +329,14 @@ async def generate_lesson(
     session_content["transcript"] = transcript
     session_content["images"] = image_files
 
-    combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}"
+    engagement_events = session_content.get("engagement_events", [])
+    disengaged = [e for e in engagement_events if not e["engaged"]]
+    engagement_note = ""
+    if disengaged:
+        times = ", ".join([f"{e['timestamp_seconds']}s" for e in disengaged])
+        engagement_note = f"\n\nSTUDENT ENGAGEMENT NOTE: The student was detected as disengaged at these points during the recording: {times}. Pay extra attention to the concepts covered around those timestamps — consider dedicating a slide to re-explaining or reinforcing that material clearly."
+
+    combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}{engagement_note}"
 
     lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a structured slideshow lesson.
 
@@ -458,6 +467,11 @@ Rules:
     lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson
     return lesson
+  except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[generate-lesson ERROR]\n{tb}")
+    raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/lesson")
@@ -521,6 +535,28 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class EngagementEvent(BaseModel):
+    timestamp_seconds: int
+    engaged: bool
+
+@app.post("/engagement/event")
+async def log_engagement_event(event: EngagementEvent):
+    session_content["engagement_events"].append({
+        "timestamp_seconds": event.timestamp_seconds,
+        "engaged": event.engaged,
+    })
+    return {"status": "ok", "total": len(session_content["engagement_events"])}
+
+@app.get("/engagement/events")
+async def get_engagement_events():
+    return session_content.get("engagement_events", [])
+
+@app.post("/engagement/reset")
+async def reset_engagement_events():
+    session_content["engagement_events"] = []
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

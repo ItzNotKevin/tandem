@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import BrandLogo from "@/components/BrandLogo";
+import EngagementTracker from "@/components/EngagementTracker";
 
 export default function RecordPage() {
   const router = useRouter();
@@ -15,6 +16,9 @@ export default function RecordPage() {
   const [recordings, setRecordings] = useState<{ id: number; duration: number; transcribing: boolean }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStep, setGeneratingStep] = useState("");
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [engagementStatus, setEngagementStatus] = useState<"engaged" | "disengaged" | "inactive">("inactive");
+  const [disengagementCount, setDisengagementCount] = useState(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -33,6 +37,17 @@ export default function RecordPage() {
     }
     return () => clearInterval(interval);
   }, [isRecording, isPaused]);
+
+  // Engagement state is driven by EngagementTracker component callbacks
+  useEffect(() => {
+    if (!isRecording) setEngagementStatus("inactive");
+    else setEngagementStatus("engaged");
+  }, [isRecording]);
+
+  const handleEngagementChange = (engaged: boolean, lapses: number) => {
+    setEngagementStatus(engaged ? "engaged" : "disengaged");
+    setDisengagementCount(lapses);
+  };
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
@@ -53,6 +68,7 @@ export default function RecordPage() {
       alert("Microphone access denied.");
       return;
     }
+    // Engagement reset is handled by EngagementTracker on mount
     setIsRecording(true);
     setIsPaused(false);
     setRecordingTime(0);
@@ -115,6 +131,7 @@ export default function RecordPage() {
 
   const handleGenerateLesson = async () => {
     setIsGenerating(true);
+    setGenerationError(null);
     setGeneratingStep("Analyzing your materials...");
 
     try {
@@ -124,14 +141,19 @@ export default function RecordPage() {
 
       setGeneratingStep("Extracting key concepts...");
       const res = await fetch("/api/generate-lesson", { method: "POST", body: formData });
-      if (!res.ok) throw new Error("Generation failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
 
       setGeneratingStep("Building your lesson...");
       await res.json();
 
       router.push("/slideshow");
     } catch (err) {
-      console.error("Lesson generation failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Lesson generation failed:", msg);
+      setGenerationError(msg);
       setIsGenerating(false);
     }
   };
@@ -237,16 +259,40 @@ export default function RecordPage() {
                 {formatTime(recordingTime)}
               </div>
 
-              <div className="h-6">
-                {isRecording ? (
-                  isPaused ? (
-                    <span className="text-[#A6977F] italic flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-[#A6977F]" /> Paused</span>
+              <div className="flex flex-col items-center gap-1">
+                <div className="h-6">
+                  {isRecording ? (
+                    isPaused ? (
+                      <span className="text-[#A6977F] italic flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-[#A6977F]" /> Paused</span>
+                    ) : (
+                      <span className="text-[#D93D3D] font-medium flex items-center gap-2 animate-pulse"><span className="w-2 h-2 rounded-full bg-[#D93D3D]" /> Recording...</span>
+                    )
                   ) : (
-                    <span className="text-[#D93D3D] font-medium flex items-center gap-2 animate-pulse"><span className="w-2 h-2 rounded-full bg-[#D93D3D]" /> Recording...</span>
-                  )
-                ) : (
-                  <span className="text-[#A6977F] italic">Ready to record</span>
+                    <span className="text-[#A6977F] italic">Ready to record</span>
+                  )}
+                </div>
+
+                {/* Engagement indicator */}
+                {engagementStatus !== "inactive" && (
+                  <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    engagementStatus === "engaged"
+                      ? "bg-[#E8F5E9] text-[#4CAF50]"
+                      : "bg-[#FDECEA] text-[#D93D3D]"
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${
+                      engagementStatus === "engaged" ? "bg-[#4CAF50]" : "bg-[#D93D3D] animate-pulse"
+                    }`} />
+                    {engagementStatus === "engaged" ? "Engaged" : "Disengaged"}
+                    {disengagementCount > 0 && (
+                      <span className="ml-1 opacity-70">· {disengagementCount} lapse{disengagementCount !== 1 ? "s" : ""}</span>
+                    )}
+                  </div>
                 )}
+              </div>
+
+              {/* Browser-based FaceMesh engagement tracker */}
+              <div className="w-full max-w-xs">
+                <EngagementTracker isActive={isRecording} onStatusChange={handleEngagementChange} />
               </div>
 
               <div className="flex items-center gap-4">
@@ -305,7 +351,13 @@ export default function RecordPage() {
           </div>
         </div>
 
-        <div className="mt-12 w-full max-w-5xl flex justify-center">
+        {generationError && (
+          <div className="mt-4 w-full max-w-5xl rounded-xl bg-[#FDECEA] border border-[#F5C6C6] px-5 py-3 text-sm text-[#D93D3D] font-mono break-all">
+            <span className="font-semibold">Error: </span>{generationError}
+          </div>
+        )}
+
+        <div className="mt-4 w-full max-w-5xl flex justify-center">
           <button
             onClick={handleGenerateLesson}
             disabled={!canGenerate}
