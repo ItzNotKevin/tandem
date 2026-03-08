@@ -1,63 +1,40 @@
 # Tandem
-Tandem is an AI-powered lecture companion that converts raw class input into a structured study session and guided problem-solving flow.
+Tandem is a fully interactive AI study companion that transitions students from passive note-taking to active, hands-on problem solving. 
 
-It helps students transition from passive note taking, to actual problem solving and memorization.
+Unlike traditional study apps or static videos, Tandem acts as a **true real-time tutor** right entirely in your browser. It doesn't just read your notes—it watches you work, understands your math, and dynamically talks to you as you solve complex problems.
 
-## Product Overview
-Most students can collect notes, but still struggle to turn those notes into understanding they can apply under pressure.  
-Tandem is designed to bridge that gap with a single workflow:
+## The AI Tutor Experience
+Tandem is built around a powerful, multi-modal conversational AI designed to truly "see" and "speak".
 
-1. Ingest lecture material (PDFs/images) and lecture audio.
-2. Extract key concepts and generate a focused lesson slideshow.
-3. Move into an interactive whiteboard stage for active practice.
-4. Receive tutor-style guidance that nudges the student to think, not just copy answers.
+- 🎙️ **Natural Conversational Flow:** Have realistic back-and-forth verbal conversations with your tutor while you work. If the AI is explaining a concept and you suddenly realize the answer, you can **interrupt it mid-sentence**, and it will actively listen, gracefully halt, and pivot to address your new thought.
+- 👁️ **Live Whiteboard Vision:** The AI has a real-time view into your digital whiteboard. As you draw out math problems, equations, or diagrams, it watches your strokes and understands the context of what you are doing.
+- 📐 **Step-by-Step Understanding:** Tandem tracks intermediate steps, not just final answers. If you make a mistake halfway through a long calculation, the AI will spot it and gently guide you back on track without just giving away the answer.
+- ✅ **Correctness Validation:** The AI actively mathematically proves and validates your handwritten work. It knows exactly when you have successfully solved a problem, triggering rewarding congratulations and moving you seamlessly to the next challenge.
 
-## What Tandem Actually Records
-Tandem records and transcribes **lecture audio** for study context.  
-It does **not** record the student as a video lecture.
-
-The engagement module may access camera input locally for attention signals during a session, but the core lesson-generation recording flow is lecture audio + uploaded materials.
-
-## Core Experience
+## Core Workflow
 ### 1) Session Setup (`/record`)
-- Upload supporting files (PDF, PNG, JPG).
-- Record lecture audio clips.
-- Transcribe clips and combine transcript + file content into one learning context.
-- Track engagement signals while the session is active.
+- Upload supporting files (PDF, PNG, JPG) like syllabuses or practice tests.
+- Record live lecture audio clips.
+- Tandem transcribes the audio and merges it with the uploaded materials into one cohesive context base.
 
-### 2) Lesson Generation (`/api/generate-lesson` -> backend)
-- Backend extracts text from uploads.
-- Gemini generates a structured slide set (titles, keywords, formulas, diagram search hints).
-- Relevant diagram images are selected and attached.
-- Output is saved as slideshow session context.
+### 2) Lesson Generation (`/api/generate-lesson`)
+- The backend extracts texts and concepts.
+- Gemini instantly parses the raw material into a structured, easily digestible slide deck featuring titles, keywords, formulas, and relevant diagram images.
 
-### 3) Slideshow Learning (`/slideshow`)
-- Student reviews AI-generated concept slides.
-- Each slide emphasizes concise explanations, key points, and formulas.
-- Flow moves directly into problem-solving mode.
+### 3) Slideshow Review (`/slideshow`)
+- Review your AI-generated concept slides to refresh on the core formulas and topics before diving into practice.
 
-### 4) Whiteboard Tutoring (`/whiteboard`)
-- Student writes out steps in a whiteboard UI.
-- Backend analyzes whiteboard snapshots.
-- Tutor responds in a Socratic style (ask guiding questions, identify mistakes, avoid giving final answer directly).
-
-## Main Features
-- AI lesson generation from mixed inputs (docs + lecture audio transcript)
-- Whiteboard-first guided tutoring loop
-- Formula rendering support for math-heavy content
-- Engagement signal tracking integrated into session context
-- Persistent cross-stage context from record -> slideshow -> whiteboard
+### 4) Active Whiteboard Tutoring (`/whiteboard`)
+- The core of Tandem. Put the notes away and start solving problems on the whiteboard.
+- Speak directly with the interactive tutor.
+- The tutor watches every stroke, evaluates your steps, provides Socratic guidance, and dynamically adapts its conversational tone based on your progress.
 
 ## Tech Stack
-- Frontend: Next.js, React, Tailwind
-- Backend: FastAPI (Python)
-- AI Models: Vertex AI Gemini + Imagen
-- Speech/Transcription: ElevenLabs
-- Engagement Signals: MediaPipe Face Landmarker
-
-## Project Structure
-- `frontend/`: app pages, API proxy routes, UI components
-- `backend/`: lesson generation, transcription, whiteboard analysis, engagement endpoints
+- **Frontend:** Next.js, React, TailwindCSS, TLDraw
+- **Backend:** FastAPI (Python)
+- **AI Models:** Vertex AI Gemini 1.5 Pro (Multimodal Vision + Reasoning) & Imagen
+- **Conversational AI:** ElevenLabs (Real-time Speech, VAD, and Interruption Logic)
+- **Engagement Signals:** MediaPipe Face Landmarker
 
 ## Local Setup
 ### Backend
@@ -77,18 +54,12 @@ npm run dev
 Frontend: `http://localhost:3000`  
 Backend: `http://localhost:8000`
 
-## Environment Variables
-Backend (required for AI/speech paths):
+## Required Environment Variables
+For the Backend (required for AI vision/generation and conversational routing):
 - `VERTEX_PROJECT`
 - `VERTEX_LOCATION`
 - `ELEVEN_LABS_API_KEY`
 
-Frontend:
-- `BACKEND_URL` (default: `http://localhost:8000`)
-
-## Demo Walkthrough
-1. Click **Start Session**
-2. Upload lecture material and record lecture audio
-3. Click **Generate Lesson**
-4. Review slides and proceed to whiteboard
-5. Solve with tutor guidance and feedback
+For the Frontend:
+- `NEXT_PUBLIC_BACKEND_URL` (default: `http://localhost:8000`)
+- `NEXT_PUBLIC_ELEVEN_LABS_AGENT_ID`
