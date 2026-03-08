@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
-import os, base64, json, asyncio, uuid, requests as req_lib, re
+import os, base64, json, asyncio, uuid, requests as req_lib, re, time
 import httpx
 import websockets as ws_lib
 from dotenv import load_dotenv
@@ -36,32 +36,41 @@ session_content: dict = {
 }
 
 session_context: dict = {
-    # ── TEST DATA ── Remove before production ──────────────────────────────
+    # ── DEMO DATA ── Replace with generated content after uploading a lesson ──
     "practice_problems": [
-        "Evaluate the integral ∫(2x + 3) dx from 0 to 4, and verify your answer.",
-        "Find the area under f(x) = x² from x=1 to x=3.",
-        "Solve the word problem: A car's velocity is v(t) = 3t^2. How far does it travel in the first 2 seconds?"
+        "Find the derivative of $f(x) = 3x^{4} - 5x^{2} + 7x - 2$ using the power rule.",
+        "Use the product rule to differentiate $g(x) = x^{3} \\cdot \\sin(x)$.",
+        "Apply the chain rule to find $h'(x)$ where $h(x) = (2x^{2} + 1)^{5}$.",
     ],
     "current_problem_index": 0,
-    "current_problem": "Evaluate the integral ∫(2x + 3) dx from 0 to 4, and verify your answer.",
+    "current_problem": "Find the derivative of $f(x) = 3x^{4} - 5x^{2} + 7x - 2$ using the power rule.",
     "file_summaries": [
         {
-            "filename": "[DEMO] Calculus_Chapter5_Integrals.pdf",
+            "filename": "[DEMO] Calculus_Derivatives.pdf",
             "type": "application/pdf",
             "summary": (
-                "CORE CONCEPTS: Definite integrals, the Fundamental Theorem of Calculus, "
-                "anti-differentiation rules (power rule, constant rule). "
-                "KEY PRINCIPLES: The integral of x^n is x^(n+1)/(n+1). "
-                "The definite integral from a to b measures the net area under the curve. "
-                "POTENTIAL PRACTICE PROBLEMS: "
-                "1) Evaluate ∫(2x + 3)dx from 0 to 4. "
-                "2) Find the area under f(x) = x² from x=1 to x=3. "
-                "SESSION GOAL: The student should master applying the power rule to evaluate definite integrals."
-            )
+                "CORE CONCEPTS: Derivatives, the power rule, product rule, and chain rule. "
+                "KEY PRINCIPLES: Power rule: d/dx[x^n] = nx^(n-1). "
+                "Product rule: d/dx[f·g] = f'g + fg'. "
+                "Chain rule: d/dx[f(g(x))] = f'(g(x))·g'(x). "
+                "SESSION GOAL: The student should be able to differentiate polynomial, product, and composite functions."
+            ),
         }
     ],
-    # ──────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
     "last_analysis": None,
+    "student_model": {
+        "mastered_concepts": [],
+        "struggling_concepts": [],
+        "mistake_patterns": {},
+        "problems_solved": 0,
+        # category_key -> {"title": str, "rating": int, "attempts": int, "correct": int, "minor_errors": int, "major_errors": int}
+        "skill_ratings": {},
+        # Prevent double-counting while whiteboard snapshots stream rapidly
+        "last_scored_event": {"signature": None, "ts": 0},
+        # Tracks whether a help request was made for the current problem (reset on problem change)
+        "hint_used": False,
+    },
 }
 
 app = FastAPI()
@@ -109,6 +118,8 @@ def _wrap_integrand(expr: str) -> str:
 
 def _normalize_non_latex_segment(text: str) -> str:
     out = text
+    # Normalize double-escaped latex commands from JSON strings (e.g. "\\frac" -> "\frac").
+    out = re.sub(r"\\\\(?=[A-Za-z])", r"\\", out)
 
     out = re.sub(r"\[\s*integral symbol\s*\]", "∫", out, flags=re.IGNORECASE)
     out = re.sub(r"\bintegral symbol\b", "∫", out, flags=re.IGNORECASE)
@@ -154,10 +165,24 @@ def _normalize_non_latex_segment(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # x^2, t^-1 -> $x^{2}$, $t^{-1}$
+    # x^2, t^-1 -> $x^{2}$, $t^{-1}$  (must run BEFORE equation wrapping)
     out = re.sub(
         r"\b([A-Za-z])\s*\^\s*(-?\d+)\b",
         lambda m: f"${m.group(1)}^{{{m.group(2)}}}$",
+        out,
+    )
+
+    # If model returns raw TeX equation without delimiters, wrap just the math part.
+    # Use lazy quantifier + transition-word lookahead so "with respect to x" stays outside.
+    # Include [.] so equations ending in a period (e.g. \frac{1}{x}. Rewrite…) still match.
+    _TRANSITION = r"(?=\s+(?:with|and|or|where|when|as|for|using|in|from|show|let|is|are)\b|[,;.]|$)"
+    out = re.sub(
+        r"\b([A-Za-z][A-Za-z0-9_]*\s*\([^)]+\)|[A-Za-z][A-Za-z0-9_]*)\s*=\s*([^.;\n]+?)" + _TRANSITION,
+        lambda m: (
+            f"${m.group(1).strip()} = {m.group(2).replace('$', '').strip()}$"
+            if ("\\" in m.group(2) or "^" in m.group(2) or "_" in m.group(2))
+            else m.group(0)
+        ),
         out,
     )
     return out
@@ -166,6 +191,24 @@ def _normalize_non_latex_segment(text: str) -> str:
 def normalize_problem_text(problem: str) -> str:
     if not isinstance(problem, str):
         return problem
+
+    # Convert display math $$...$$ to inline $...$ — practice problem cards use inline.
+    problem = re.sub(r"\$\$([^$\n]+?)\$\$", r"$\1$", problem)
+
+    # If the model wraps whole instruction sentences in $...$, unwrap them first.
+    problem = re.sub(
+        r"\$([^$\n]{40,})\$",
+        lambda m: (
+            m.group(1)
+            if re.search(
+                r"\b(find|show|rewrite|simplify|use|remember|evaluate|differentiate|derivative|step)\b",
+                m.group(1),
+                flags=re.IGNORECASE,
+            )
+            else m.group(0)
+        ),
+        problem,
+    )
 
     parts = LATEX_BLOCK_RE.split(problem)
     normalized_parts: list[str] = []
@@ -181,6 +224,220 @@ def normalize_problem_text(problem: str) -> str:
 
 def normalize_problem_list(problems: list[str]) -> list[str]:
     return [normalize_problem_text(p) for p in problems if isinstance(p, str)]
+
+
+def _canonical_skill(concept: str) -> Optional[tuple[str, str]]:
+    c = concept.strip().lower()
+    mapping = [
+        (["power rule"], ("power_rule", "Power Rule")),
+        (["chain rule"], ("chain_rule", "Chain Rule")),
+        (["product rule"], ("product_rule", "Product Rule")),
+        (["quotient rule"], ("quotient_rule", "Quotient Rule")),
+        (["implicit differentiation", "implicit derivative"], ("implicit_diff", "Implicit Differentiation")),
+        (["derivative", "differentiation"], ("derivatives_general", "Derivatives")),
+        (["definite integral"], ("definite_integrals", "Definite Integrals")),
+        (["indefinite integral", "antiderivative"], ("indefinite_integrals", "Indefinite Integrals")),
+        (["u-substitution", "substitution"], ("u_substitution", "U-Substitution")),
+        (["riemann sum"], ("riemann_sums", "Riemann Sums")),
+        (["limit"], ("limits", "Limits")),
+        (["algebra", "simplification"], ("algebraic_manipulation", "Algebraic Manipulation")),
+    ]
+    for needles, result in mapping:
+        if any(n in c for n in needles):
+            return result
+    return None
+
+
+def _skill_from_problem(problem_text: str) -> Optional[tuple[str, str]]:
+    p = (problem_text or "").lower()
+    # One clear testable skill per problem: infer from prompt text first.
+    ordered_rules = [
+        (["product rule"], ("product_rule", "Product Rule")),
+        (["quotient rule"], ("quotient_rule", "Quotient Rule")),
+        (["chain rule"], ("chain_rule", "Chain Rule")),
+        (["implicit differentiation", "implicit derivative"], ("implicit_diff", "Implicit Differentiation")),
+        (["riemann sum"], ("riemann_sums", "Riemann Sums")),
+        (["u-substitution", "substitution"], ("u_substitution", "U-Substitution")),
+        (["definite integral"], ("definite_integrals", "Definite Integrals")),
+        (["indefinite integral", "antiderivative"], ("indefinite_integrals", "Indefinite Integrals")),
+        (["power rule"], ("power_rule", "Power Rule")),
+        (["differentiate", "derivative"], ("derivatives_general", "Derivatives")),
+        (["limit"], ("limits", "Limits")),
+    ]
+    for needles, skill in ordered_rules:
+        if any(n in p for n in needles):
+            return skill
+    return None
+
+
+def _ensure_skill_bucket(sm: dict, key: str, title: str) -> tuple[str, dict]:
+    bucket = sm["skill_ratings"].setdefault(
+        key,
+        {"title": title, "rating": 50, "attempts": 0, "correct": 0, "minor_errors": 0, "major_errors": 0},
+    )
+    return key, bucket
+
+
+def _clamp_rating(value: int) -> int:
+    return max(0, min(100, value))
+
+
+def _update_student_model(analysis: dict) -> None:
+    """Update student model from a whiteboard analysis."""
+    sm = session_context["student_model"]
+    concept = (analysis.get("concept") or "").strip()
+    if not concept or len(concept) > 60:
+        return
+
+    # Determine one relevant skill category for this problem.
+    problem_skill = _skill_from_problem(session_context.get("current_problem", ""))
+    concept_skill = _canonical_skill(concept)
+    chosen_skill = problem_skill or concept_skill
+    if not chosen_skill:
+        # Ignore noisy/non-actionable concepts (e.g. "basic addition", handwriting artifacts, etc.)
+        return
+    skill_key_name, skill_title = chosen_skill
+
+    # Keep only allowed skill buckets to avoid long-tail noisy categories.
+    allowed_keys = {
+        "power_rule", "chain_rule", "product_rule", "quotient_rule", "implicit_diff",
+        "derivatives_general", "definite_integrals", "indefinite_integrals",
+        "u_substitution", "riemann_sums", "limits", "algebraic_manipulation",
+    }
+    sm["skill_ratings"] = {k: v for k, v in sm.get("skill_ratings", {}).items() if k in allowed_keys}
+
+    # New fields from VLM output (fallbacks preserve backward compatibility)
+    work_state = str(analysis.get("workState") or "").strip().lower()
+    if not work_state:
+        work_state = "solved" if analysis.get("isSolved") else "in_progress"
+    mistake_severity = str(analysis.get("mistakeSeverity") or "").strip().lower()
+    if not mistake_severity:
+        mistake_severity = "major" if analysis.get("hasMistake") else "none"
+    raw_confidence = analysis.get("confidence", 0.7)
+    try:
+        confidence = float(raw_confidence)
+    except Exception:
+        confidence = 0.7
+
+    # De-dupe repeated identical scoring events caused by frequent whiteboard snapshots.
+    now_ts = int(time.time())
+    signature = f"{skill_key_name}|{work_state}|{analysis.get('isSolved')}|{analysis.get('hasMistake')}|{mistake_severity}|{analysis.get('mistakeCategory','')}"
+    last = sm.get("last_scored_event", {"signature": None, "ts": 0})
+    if last.get("signature") == signature and now_ts - int(last.get("ts", 0)) < 12:
+        return
+
+    skill_key, skill_bucket = _ensure_skill_bucket(sm, skill_key_name, skill_title)
+    scored = False
+    tracked_label = skill_title
+
+    if analysis.get("isSolved") or work_state == "solved":
+        sm["problems_solved"] += 1
+        skill_bucket["attempts"] += 1
+        skill_bucket["correct"] += 1
+        # If a hint was used, award reduced points and cap at 70 max
+        if sm.get("hint_used"):
+            gain = 3
+            skill_bucket["rating"] = min(70, _clamp_rating(skill_bucket["rating"] + gain))
+        else:
+            skill_bucket["rating"] = _clamp_rating(skill_bucket["rating"] + 8)
+        sm["hint_used"] = False  # reset for next problem
+        # Only award mastered if rating is high enough after the solve
+        if skill_bucket["rating"] >= 70:
+            if tracked_label not in sm["mastered_concepts"]:
+                sm["mastered_concepts"].append(tracked_label)
+            if tracked_label in sm["struggling_concepts"]:
+                sm["struggling_concepts"].remove(tracked_label)
+        scored = True
+
+    # Important: do NOT penalize while work is still in progress.
+    should_penalize = analysis.get("hasMistake") and work_state in {"attempted_final", "solved"} and confidence >= 0.6
+    if should_penalize:
+        # Use Gemini's own mistake classification — dynamic, context-aware
+        category = (analysis.get("mistakeCategory") or "other error").strip()
+        if tracked_label not in sm["mastered_concepts"]:
+            if tracked_label not in sm["struggling_concepts"]:
+                sm["struggling_concepts"].append(tracked_label)
+        sm["mistake_patterns"][category] = sm["mistake_patterns"].get(category, 0) + 1
+        skill_bucket["attempts"] += 1
+        if mistake_severity == "minor":
+            skill_bucket["minor_errors"] += 1
+            skill_bucket["rating"] = _clamp_rating(skill_bucket["rating"] - 2)
+        else:
+            skill_bucket["major_errors"] += 1
+            skill_bucket["rating"] = _clamp_rating(skill_bucket["rating"] - 8)
+        scored = True
+
+    if scored:
+        sm["last_scored_event"] = {"signature": signature, "ts": now_ts}
+
+
+
+def validate_problem_format(question: str) -> tuple[bool, list[str]]:
+    issues: list[str] = []
+    if not isinstance(question, str) or not question.strip():
+        return False, ["Question must be a non-empty string."]
+
+    if "\n" in question:
+        issues.append("Question must be a single line (no hard line breaks).")
+
+    if question.count("$") % 2 != 0:
+        issues.append("Unbalanced $ delimiters.")
+
+    parts = LATEX_BLOCK_RE.split(question)
+    latex_blocks = [p for p in parts if p.startswith("$")]
+    non_latex = "".join(p for p in parts if not p.startswith("$"))
+
+    # Raw TeX outside math delimiters is not allowed.
+    if re.search(r"\\[A-Za-z]+", non_latex):
+        issues.append("Raw LaTeX command appears outside $...$.")
+    if re.search(r"[A-Za-z0-9)\]}]\s*\^\s*[-A-Za-z0-9({\\]", non_latex):
+        issues.append("Caret exponent appears outside $...$.")
+    if re.search(r"[{}]", non_latex):
+        issues.append("Curly braces appear outside $...$.")
+
+    verb_re = re.compile(
+        r"\b(find|show|rewrite|simplify|use|remember|evaluate|differentiate|derivative|step|indicating|clearly)\b",
+        flags=re.IGNORECASE,
+    )
+    for block in latex_blocks:
+        inner = block[1:-1].strip() if block.startswith("$") and block.endswith("$") else block
+        if re.search(r"\\\\[A-Za-z]", inner):
+            issues.append("Double-escaped LaTeX command found inside math.")
+        # Detect full sentence accidentally wrapped as math.
+        if len(inner) > 40 and verb_re.search(inner):
+            issues.append("Instruction text was wrapped in LaTeX.")
+        # Soft style warning; not fatal to acceptance.
+        if len(inner) > 70 and len(re.findall(r"[+\-=]", inner)) >= 2:
+            issues.append("Style warning: inline equation may be too long for the card.")
+
+    if not latex_blocks:
+        issues.append("Question must include inline LaTeX for math expressions.")
+
+    return len(issues) == 0, issues
+
+
+def _fatal_issues_only(issues: list[str]) -> list[str]:
+    return [i for i in issues if not i.startswith("Style warning:")]
+
+
+def _build_generation_rules(user_context: str = "") -> str:
+    extra = f"\nContext focus: {user_context}" if user_context else ""
+    return f"""Formatting contract (must follow exactly):
+- Write plain English for instructions, and use inline LaTeX ONLY for equations/expressions.
+- Never wrap full instruction sentences in $...$.
+- Never output raw TeX outside $...$ (no \\frac, \\sqrt, ^, _, {{, }} in plain text).
+- In JSON output, LaTeX backslashes MUST be doubled: write $\\\\frac{{1}}{{x}}$ in the JSON so it renders as $\\frac{{1}}{{x}}$ after parsing. Never use single backslash inside a JSON string.
+- Keep every inline equation short enough to fit the UI; split long expressions into multiple short inline math chunks separated by plain text operators.
+- No hard line breaks in the question text.
+- Avoid ambiguous visual formatting: do not place isolated exponents on separate lines.
+- If you ask to simplify without negative exponents, ensure the final expression in the prompt is compatible with that instruction.
+- Do not mutate signs/exponents accidentally while rewriting; preserve equivalence exactly.
+- Edge cases to avoid:
+  1) prose fully italicized because a full sentence was inside $...$
+  2) raw /frac, \\frac, ^, or braces shown as literal text
+  3) malformed powers like x then superscript on a separate visual line
+  4) oversized single equation that forces horizontal scrolling{extra}
+"""
 
 
 @app.get("/")
@@ -205,18 +462,31 @@ async def analyze_whiteboard(request: WhiteboardAnalysisRequest):
         problem = request.questionContext or session_context["current_problem"]
         file_summaries = session_context.get("file_summaries", [])
         summaries = "\n".join([f"- {f['filename']}: {f['summary']}" for f in file_summaries if isinstance(f, dict)])
-        
+
         last_analysis = session_context.get("last_analysis")
         last_analysis_text = ""
         if last_analysis:
             last_analysis_text = f"\n- PREVIOUS ANALYSIS OF THIS BOARD:\n  What you saw: {last_analysis.get('feedback', 'None')}\n  What you said: {last_analysis.get('spokenResponse', 'None')}"
+
+        sm = session_context.get("student_model", {})
+        mastered = ", ".join(sm.get("mastered_concepts", [])) or "none yet"
+        struggling = ", ".join(sm.get("struggling_concepts", [])) or "none yet"
+        patterns = ", ".join(
+            f"{k} (×{v})" for k, v in sorted(sm.get("mistake_patterns", {}).items(), key=lambda x: -x[1])
+        ) or "none yet"
+        student_model_text = f"""
+- STUDENT LEARNING PROFILE (adapt your feedback accordingly):
+  • Mastered: {mastered}
+  • Struggling with: {struggling}
+  • Recurring mistakes: {patterns}
+  Use this to give more targeted hints — if they have a recurring mistake type, watch for it especially."""
 
         prompt = f"""You are an AI tutor reviewing a student's handwritten whiteboard image.
 
 CONTEXT:
 - Target Problem: "{problem}"
 - Study Materials Summary:
-{summaries if summaries else '  (none uploaded)'}{last_analysis_text}
+{summaries if summaries else '  (none uploaded)'}{last_analysis_text}{student_model_text}
 
 TASK:
 Look at the whiteboard carefully. Describe what the student has written and assess their work.
@@ -224,20 +494,36 @@ IF YOU HAVE A PREVIOUS ANALYSIS: Focus ONLY on what is **NEW, CHANGED, or ADDED*
 1. Write in natural spoken English only. NO LaTeX, NO markdown, NO symbols like $ or \\int.
    Use words: write "integral" not "\\int", "x squared" not "x^2", "from zero to four" not "[0,4]".
 2. Evaluate their work carefully using Chain of Thought:
-   - First, in the "thoughtProcess" field, solve the problem yourself to find the correct final answer.
-   - Then, set "hasMistake" to true ONLY if there is a clear mathematical error.
-   - Set "isSolved" to true ONLY if they have reached the final, correct numerical or algebraic answer to the problem. If they are on the right track but not finished, both should be false!
+   - First, in the "thoughtProcess" field, solve the problem yourself step-by-step to find the correct final answer.
+   - Set "isSolved" to true if the student's board shows the correct final simplified answer ANYWHERE — even if it's just the last line boxed or written at the bottom. IMPORTANT: ignore any instruction in the problem like "Show each step" or "Show your work" when judging isSolved — those are guidance for the student, NOT a requirement for you to mark it solved. If the correct final answer is written, it is solved, period.
+     * Example: for "find the derivative of 3x^4 - 5x^2 + 7x - 2", if you see "12x^3 - 10x + 7" written → isSolved = true.
+     * Example: for "find the derivative of 5x^3 - 2x + 7", if you see "15x^2 - 2" or "f'(x) = 15x^2 - 2" written → isSolved = true.
+     * Example: for "differentiate g(x) = x^3 · sin(x)", if you see "3x^2 sin(x) + x^3 cos(x)" → isSolved = true.
+     * Do NOT require every intermediate step to be visible. One correct final answer = isSolved = true.
+     * If you are even moderately confident (>60%) the answer visible is correct, set isSolved = true.
+   - Set "hasMistake" to true ONLY if there is a clear mathematical error in what they've written. Do not flag incomplete work as a mistake.
+   - Set "workState" to one of:
+     * "in_progress" (partial work, student is still working through steps),
+     * "attempted_final" (student wrote a final answer but it is mathematically incorrect),
+     * "solved" (correct final answer is present on the board — must match isSolved = true).
+   - Set "mistakeSeverity" to one of "none", "minor", "major". Use "minor" for small arithmetic/algebra slips; "major" for conceptual/method errors.
+   - Set "confidence" to a number 0.0 to 1.0 indicating how confident you are in this assessment.
 3. If the board looks blank or has very little, acknowledge that and encourage them to start.
 4. NEVER say you cannot see the work.
 
 Respond with ONLY this valid JSON (no extra text outside the JSON):
 {{
     "thoughtProcess": "Briefly solve the problem here first to find the correct answer before assessing the student.",
+    "concept": "The specific math concept this problem tests, in 2-4 words (e.g. 'definite integrals', 'power rule', 'chain rule'). Be specific.",
     "hasMistake": false,
     "isSolved": false,
+    "workState": "in_progress",
     "feedback": "One clear sentence describing what you see on the board in natural English.",
     "spokenResponse": "2-3 sentences Artie should say aloud. Acknowledge what the student wrote, then ask one guiding question to help them take the next step. Never give the answer. Natural spoken English only.",
     "mistakeDescription": "If hasMistake is true, plain English description of the error. Otherwise write 'none'.",
+    "mistakeCategory": "If hasMistake is true, a short 2-5 word label for the TYPE of mistake (e.g. 'sign error', 'missing constant of integration', 'wrong chain rule application', 'arithmetic error', 'incorrect bounds'). Be specific to the actual mistake. Otherwise write 'none'.",
+    "mistakeSeverity": "none",
+    "confidence": 0.8,
     "coordinates": null
 }}"""
         
@@ -253,6 +539,7 @@ Respond with ONLY this valid JSON (no extra text outside the JSON):
 
         analysis = json.loads(text)
         session_context["last_analysis"] = analysis
+        _update_student_model(analysis)
         return analysis
     except Exception as e:
         return {
@@ -262,28 +549,91 @@ Respond with ONLY this valid JSON (no extra text outside the JSON):
         }
 
 
+@app.get("/student-model")
+async def get_student_model():
+    return session_context.get("student_model", {})
+
+
+@app.post("/student-model/help-request")
+async def record_help_request():
+    """Called when the student explicitly asks Artie for help on the current problem."""
+    sm = session_context["student_model"]
+    chosen = _skill_from_problem(session_context.get("current_problem", ""))
+    if not chosen:
+        return {"status": "no_skill_tracked"}
+    skill_key, skill_title = chosen
+    allowed_keys = {
+        "power_rule", "chain_rule", "product_rule", "quotient_rule", "implicit_diff",
+        "derivatives_general", "definite_integrals", "indefinite_integrals",
+        "u_substitution", "riemann_sums", "limits", "algebraic_manipulation",
+    }
+    if skill_key not in allowed_keys:
+        return {"status": "no_skill_tracked"}
+    _, bucket = _ensure_skill_bucket(sm, skill_key, skill_title)
+    # Asking for help is a weaker signal than a mistake — small rating nudge down
+    bucket["rating"] = _clamp_rating(bucket["rating"] - 4)
+    bucket["attempts"] = bucket.get("attempts", 0) + 1
+    if skill_title not in sm["mastered_concepts"]:
+        if skill_title not in sm["struggling_concepts"]:
+            sm["struggling_concepts"].append(skill_title)
+    pattern_key = f"needed help with {skill_title.lower()}"
+    sm["mistake_patterns"][pattern_key] = sm["mistake_patterns"].get(pattern_key, 0) + 1
+    sm["hint_used"] = True
+    return {"status": "ok", "skill": skill_title, "new_rating": bucket["rating"]}
+
+
+@app.post("/student-model/reset")
+async def reset_student_model():
+    session_context["student_model"] = {
+        "mastered_concepts": [],
+        "struggling_concepts": [],
+        "mistake_patterns": {},
+        "problems_solved": 0,
+        "skill_ratings": {},
+        "last_scored_event": {"signature": None, "ts": 0},
+        "hint_used": False,
+    }
+    return {"status": "ok"}
+
+
 @app.post("/problem/generate")
 async def generate_problem(request: Request):
     try:
         body = await request.json()
         context = body.get("context", "General Subject")
-        prompt = f"""Generate one challenging but solvable {context} problem for a student.
+        base_prompt = f"""Generate one challenging but solvable {context} problem for a student.
 
-Formatting requirements:
-- Put every mathematical expression in inline LaTeX with single-dollar delimiters (e.g. $\\int_0^4 (2x+3)\\,dx$, $x^2$, $\\sum_{{i=1}}^n i$).
-- Never write math in prose like "integral from ... to ..." or "sum from ... to ...".
-- In JSON strings, escape backslashes correctly (e.g. "\\\\int", "\\\\sum", "\\\\Delta x").
+{_build_generation_rules(context)}
 
 Return ONLY valid JSON with this exact schema:
 {{"question": "...", "solution": "...", "context": "..."}}
 """
-        response = model.generate_content(prompt)
-        text = extract_json_text(response.text)
-        result = json.loads(text)
-        if "question" in result:
+        result = None
+        valid = False
+        issues: list[str] = []
+        for _ in range(4):
+            prompt = base_prompt
+            if issues:
+                prompt += "\nPrevious output was rejected. Fix these issues exactly:\n- " + "\n- ".join(issues)
+            response = model.generate_content(prompt)
+            text = extract_json_text(response.text)
+            result = json.loads(text)
+            if "question" not in result:
+                issues = ["Missing 'question' field."]
+                continue
             result["question"] = normalize_problem_text(result["question"])
-        if "solution" in result and isinstance(result["solution"], str):
-            result["solution"] = normalize_problem_text(result["solution"])
+            if "solution" in result and isinstance(result["solution"], str):
+                result["solution"] = normalize_problem_text(result["solution"])
+            valid, issues = validate_problem_format(result["question"])
+            fatal_issues = _fatal_issues_only(issues)
+            if valid or not fatal_issues:
+                break
+            issues = fatal_issues
+        if result is None:
+            return {"error": "Problem generation failed."}
+        # Best-effort fallback: return normalized question even if strict validation failed.
+        if not valid and issues:
+            print(f"[Problem Generate] Returning best-effort normalized output despite validation issues: {issues}")
         session_context["current_problem"] = result["question"]
         return result
     except Exception as e:
@@ -296,6 +646,8 @@ async def next_problem():
     if idx + 1 < len(problems):
         session_context["current_problem_index"] = idx + 1
         session_context["current_problem"] = problems[idx + 1]
+    session_context["student_model"]["hint_used"] = False
+    session_context["last_analysis"] = None
     return {"current_problem": session_context["current_problem"], "current_problem_index": session_context["current_problem_index"], "total": len(problems)}
 
 @app.post("/problem/prev")
@@ -305,6 +657,8 @@ async def prev_problem():
     if idx - 1 >= 0:
         session_context["current_problem_index"] = idx - 1
         session_context["current_problem"] = problems[idx - 1]
+    session_context["student_model"]["hint_used"] = False
+    session_context["last_analysis"] = None
     return {"current_problem": session_context["current_problem"], "current_problem_index": session_context["current_problem_index"], "total": len(problems)}
 
 class SlideshowGenerateRequest(BaseModel):
@@ -745,20 +1099,22 @@ Lecture transcript excerpt:
 
 Write the complete narrator briefing now. It will be injected directly into the live voice agent."""
 
+    source_notes = extracted_text[:3000].strip() or slides_text[:3000]
+
     practice_prompt = f"""You are creating 3 practice problems for a student to solve step-by-step on a whiteboard.
 
 Based ONLY on the concepts in these course notes, write 3 challenging but solvable problems that gradually increase in difficulty.
 
 COURSE NOTES:
-{extracted_text[:3000]}
+{source_notes}
 
 Requirements:
 - The problems must be directly grounded in concepts from the notes above.
 - They should require showing clear step-by-step work.
-- Put every mathematical expression in inline LaTeX with single-dollar delimiters.
-- Use standard calculus notation in LaTeX (for example: $\\int_a^b f(x)\\,dx$, $x^2$, $\\Delta x$, $x_i$, $\\lim_{{n \\to \\infty}}$, $\\sum_{{i=1}}^n i$).
+- Use standard calculus notation in LaTeX where needed. In JSON output, backslashes must be doubled.
+  Examples (as they should appear in the JSON string): $\\\\frac{{1}}{{x}}$, $x^2$, $\\\\int_a^b f(x)\\\\,dx$, $\\\\sqrt{{x}}$, $\\\\sin(x)$, $x^{{-3}}$.
 - Never write prose-math like "integral from ... to ..." or "Sigma from ... to ...".
-- In JSON strings, escape backslashes correctly (e.g. "\\\\int", "\\\\sum", "\\\\Delta").
+{_build_generation_rules("whiteboard problem card readability")}
 - Return ONLY a valid JSON array of exactly 3 strings. No markdown, no labels, no preamble."""
 
     async def gen_narrator_ctx():
@@ -776,15 +1132,44 @@ Requirements:
             )
 
     async def gen_practice_problems():
-        if not uploaded_file_summaries:
-            return None
         try:
-            resp = await asyncio.to_thread(model.generate_content, practice_prompt)
-            print("Raw response:", resp.text)
-            raw = extract_json_text(resp.text)
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return normalize_problem_list(parsed)[:3]
+            issues: list[str] = []
+            best_effort: list[str] | None = None
+            for attempt in range(4):
+                prompt = practice_prompt
+                if issues:
+                    prompt += "\nPrevious output was rejected. Fix these issues exactly:\n- " + "\n- ".join(issues)
+                try:
+                    resp = await asyncio.to_thread(model.generate_content, prompt)
+                    print(f"Raw response (attempt {attempt + 1}):", resp.text)
+                    raw = extract_json_text(resp.text)
+                    # JSON treats \f as form-feed, \n as newline, etc., silently corrupting
+                    # LaTeX commands like \frac → rac. Pre-escape all single backslashes
+                    # before letters so they survive json.loads intact.
+                    raw = re.sub(r'(?<!\\)\\([a-zA-Z])', r'\\\\\1', raw)
+                    parsed = json.loads(raw)
+                except Exception as parse_err:
+                    print(f"[Whiteboard] Parse error on attempt {attempt + 1}: {parse_err}")
+                    issues = ["Return a JSON array with exactly 3 problem strings. No extra text outside the JSON array."]
+                    continue
+                if not isinstance(parsed, list) or len(parsed) < 3:
+                    issues = ["Return a JSON array with exactly 3 problem strings."]
+                    continue
+                normalized = normalize_problem_list(parsed)[:3]
+                best_effort = normalized
+                all_issues: list[str] = []
+                for idx, q in enumerate(normalized):
+                    valid, q_issues = validate_problem_format(q)
+                    if not valid:
+                        for issue in q_issues:
+                            all_issues.append(f"Problem {idx + 1}: {issue}")
+                fatal_issues = [i for i in all_issues if "Style warning:" not in i]
+                if not fatal_issues:
+                    return normalized
+                issues = fatal_issues
+            if best_effort:
+                print(f"[Whiteboard] Using best-effort practice problems after validation issues: {issues}")
+                return best_effort
             return None
         except Exception as e:
             print(f"[Whiteboard] Could not generate practice problems: {e}")
@@ -797,15 +1182,19 @@ Requirements:
 
     session_context["narrator_context"] = narrator_text
 
-    if uploaded_file_summaries:
-        session_context["file_summaries"] = uploaded_file_summaries
-        session_context["last_analysis"] = None
-        if practice_problems and isinstance(practice_problems, list):
-            session_context["practice_problems"] = practice_problems
-            session_context["current_problem_index"] = 0
-            if practice_problems:
-                session_context["current_problem"] = practice_problems[0]
-            print(f"[Whiteboard] Generated {len(practice_problems)} practice problems.")
+    session_context["file_summaries"] = uploaded_file_summaries
+    session_context["last_analysis"] = None
+    if practice_problems and isinstance(practice_problems, list):
+        session_context["practice_problems"] = practice_problems
+        session_context["current_problem_index"] = 0
+        if practice_problems:
+            session_context["current_problem"] = practice_problems[0]
+        print(f"[Whiteboard] Generated {len(practice_problems)} practice problems.")
+    else:
+        # Avoid showing stale/demo problems if generation didn't return usable items.
+        session_context["practice_problems"] = []
+        session_context["current_problem_index"] = 0
+        session_context["current_problem"] = "Practice problems are not ready yet. Regenerate the lesson."
 
     lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson

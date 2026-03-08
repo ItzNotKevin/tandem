@@ -1,12 +1,13 @@
 'use client'
 
-import { Tldraw, Editor, createShapeId } from '@tldraw/tldraw'
+import { Tldraw, Editor } from '@tldraw/tldraw'
 import '@tldraw/tldraw/tldraw.css'
 import { useCallback, useRef, forwardRef, useImperativeHandle } from 'react'
 
 export interface TldrawBoardHandle {
   captureSnapshot: () => Promise<{ base64: string } | null>
   pointTo: (x: number, y: number) => void
+  clearBoard: () => void
 }
 
 interface TldrawBoardProps {
@@ -58,9 +59,18 @@ const TldrawBoard = forwardRef<TldrawBoardHandle, TldrawBoardProps>(({
     // no-op: would crash with "Unexpected property" on cursor.x in this tldraw build
   }, [])
 
+  const clearBoard = useCallback(() => {
+    if (!editorRef.current) return
+    const shapeIds = Array.from(editorRef.current.getCurrentPageShapeIds())
+    if (shapeIds.length > 0) {
+      editorRef.current.deleteShapes(shapeIds)
+    }
+  }, [])
+
   useImperativeHandle(ref, () => ({
     captureSnapshot,
-    pointTo
+    pointTo,
+    clearBoard,
   }))
 
   const handleMount = useCallback((editor: Editor) => {

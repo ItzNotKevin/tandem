@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
 import BrandLogo from '@/components/BrandLogo'
-import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp, PartyPopper, CheckCircle } from 'lucide-react'
+import { Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp, PartyPopper, CheckCircle } from 'lucide-react'
 import LatexRenderer from '@/components/LatexRenderer'
 import confetti from 'canvas-confetti'
 import { useConversation } from '@elevenlabs/react'
@@ -125,6 +125,21 @@ function applySmartLineBreaks(text: string): string {
   return out
 }
 
+interface StudentModel {
+  mastered_concepts: string[]
+  struggling_concepts: string[]
+  mistake_patterns: Record<string, number>
+  problems_solved: number
+  skill_ratings?: Record<string, {
+    title: string
+    rating: number
+    attempts: number
+    correct: number
+    minor_errors: number
+    major_errors: number
+  }>
+}
+
 export default function WhiteboardPage() {
   const boardRef = useRef<TldrawBoardHandle>(null)
   const [isWipingAway, setIsWipingAway] = useState(false)
@@ -132,6 +147,8 @@ export default function WhiteboardPage() {
   const [feedback, setFeedback] = useState<AnalysisResponse | null>(null)
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
   const [currentQuestion, setCurrentQuestion] = useState("What are we working on today?")
+  const [studentModel, setStudentModel] = useState<StudentModel | null>(null)
+  const [isProgressOpen, setIsProgressOpen] = useState(false)
   const [isProblemOpen, setIsProblemOpen] = useState(true)
   const [hasSolvedCurrent, setHasSolvedCurrent] = useState(false)
   const [showNextConfirm, setShowNextConfirm] = useState(false)
@@ -151,6 +168,12 @@ export default function WhiteboardPage() {
   const displayQuestion = useMemo(
     () => applySmartLineBreaks(normalizeProblemMath(currentQuestion)),
     [currentQuestion]
+  )
+  const hasStudentData = !!studentModel && (
+    studentModel.mastered_concepts.length > 0 ||
+    studentModel.struggling_concepts.length > 0 ||
+    Object.keys(studentModel.mistake_patterns).length > 0 ||
+    Object.keys(studentModel.skill_ratings || {}).length > 0
   )
 
   // Auto-scroll transcript to bottom
@@ -182,7 +205,15 @@ export default function WhiteboardPage() {
       }
     }
     fetchSession()
-  }, [])
+    fetchStudentModel()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchStudentModel = async () => {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/student-model`)
+      if (res.ok) setStudentModel(await res.json())
+    } catch { /* silent */ }
+  }
 
   // ElevenLabs Conversation Hook
   const conversation = useConversation({
@@ -211,9 +242,15 @@ CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students n
           setTranscript(prev => [...prev, { role: 'user', text: message.message }])
         }
 
+        // Detect help requests and penalise the skill rating accordingly
+        const helpRe = /\b(help|hint|stuck|don'?t know|not sure|confused|explain|tell me|what (is|do|should)|how (do|should|does)|can you (show|tell|explain)|i give up|no idea)\b/i
+        if (helpRe.test(message.message)) {
+          fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/student-model/help-request`, { method: 'POST' })
+            .then(() => fetchStudentModel())
+            .catch(() => {/* silent */})
+        }
+
         // Re-inject latest whiteboard state right before Artie responds
-        // This is the KEY fix: sendContextualUpdate is dropped while Artie speaks,
-        // so we re-send on every user turn to guarantee fresh whiteboard context
         const latest = latestAnalysisRef.current
         if (latest && sendUpdateRef.current) {
           sendUpdateRef.current(latest)
@@ -230,7 +267,7 @@ CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students n
   const proceedToNext = async () => {
     setShowNextConfirm(false)
     setHasSolvedCurrent(false)
-
+    setFeedback(null)
     // If we're on the last problem, complete the session
     if (sessionData && sessionData.current_problem_index === sessionData.practice_problems.length - 1) {
       triggerSessionComplete()
@@ -241,6 +278,8 @@ CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students n
     const data = await res.json()
     setCurrentQuestion(data.current_problem)
     setSessionData({ ...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem })
+    boardRef.current?.clearBoard()
+    lastSnapshotRef.current = null
     if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
   }
 
@@ -364,6 +403,11 @@ VISUAL ANALYSIS: ${result.feedback}
 ${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}
 Use this context to understand what is currently on the board if the student talks about their work.`
 
+      // Fetch updated student model (includes fresh remediation state from backend)
+      const smRes = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/student-model`).catch(() => null)
+      const freshModel: StudentModel | null = smRes?.ok ? await smRes.json() : null
+      if (freshModel) setStudentModel(freshModel)
+
       let aiInstruction = "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually."
 
       if (result.isSolved) {
@@ -374,7 +418,7 @@ Use this context to understand what is currently on the board if the student tal
 
       if (isConnected) {
         // We interrupt Artie by sending the visual observation as a system event.
-        // Because ElevenLabs is the main conversational LLM, it will naturally 
+        // Because ElevenLabs is the main conversational LLM, it will naturally
         // halt its current output, process this new information, and dynamically pivot!
         sendUserMessage(observation + aiInstruction)
       } else {
@@ -447,9 +491,6 @@ Use this context to understand what is currently on the board if the student tal
 
       {/* Right Sidebar */}
       <div className="w-[350px] border-l border-[#E0D5C5] flex flex-col bg-[#F6F4EE]">
-        <div className="px-6 py-1.5 border-b border-[#E0D5C5] bg-[#FAF6EF]">
-          <BrandLogo className="w-20" />
-        </div>
 
         {/* Question Box */}
         <div className="bg-[#FAF6EF] border-b border-[#E0D5C5]">
@@ -468,12 +509,12 @@ Use this context to understand what is currently on the board if the student tal
           </button>
 
           <div
-            className={`px-6 overflow-hidden transition-all duration-300 ease-in-out ${isProblemOpen ? 'max-h-[500px] pb-6 opacity-100' : 'max-h-0 pb-0 opacity-0'
+            className={`px-6 overflow-hidden transition-all duration-300 ease-in-out ${isProblemOpen ? 'max-h-[400px] pb-4 opacity-100' : 'max-h-0 pb-0 opacity-0'
               }`}
           >
-            <div className="h-[180px] overflow-y-auto custom-scrollbar p-6 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm">
+            <div className="h-[130px] overflow-y-auto overflow-x-hidden custom-scrollbar p-4 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm">
               <div className="min-h-full flex items-center justify-center">
-                <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic text-center text-balance">
+                <p className="text-[#3D2F1E] font-medium text-base leading-relaxed text-center">
                   <LatexRenderer>{displayQuestion}</LatexRenderer>
                 </p>
               </div>
@@ -497,11 +538,14 @@ Use this context to understand what is currently on the board if the student tal
                       disabled={sessionData.current_problem_index === 0}
                       onClick={async () => {
                         setHasSolvedCurrent(false)
+                        setFeedback(null)
                         setShowNextConfirm(false)
                         const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/prev`, { method: 'POST' })
                         const data = await res.json()
                         setCurrentQuestion(data.current_problem)
                         setSessionData({ ...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem })
+                        boardRef.current?.clearBoard()
+                        lastSnapshotRef.current = null
                         if (isConnected) sendContextualUpdate(`The student has moved BACK to a previous problem: "${data.current_problem}". Please help them with this one now.`)
                       }}
                       className="flex-1 py-2 px-3 text-[10px] font-black text-[#8B7355] uppercase tracking-wider border border-[#E0D5C5] rounded-xl hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition-all shadow-sm"
@@ -664,6 +708,66 @@ Use this context to understand what is currently on the board if the student tal
               )}
             </div>
           </button>
+
+          {/* Student Learning Profile — collapsed by default, below chat */}
+          <div className="mt-3 border border-[#E0D5C5] rounded-xl overflow-hidden">
+            <button
+              onClick={() => setIsProgressOpen(!isProgressOpen)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-[#FAF6EF] hover:bg-[#E0D5C5]/30 transition-colors"
+            >
+              <h2 className="text-[10px] font-black text-[#8B7355] uppercase tracking-[0.2em]">
+                Learning Profile
+              </h2>
+              {isProgressOpen ? (
+                <ChevronUp className="w-3.5 h-3.5 text-[#8B7355] opacity-60" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-[#8B7355] opacity-60" />
+              )}
+            </button>
+
+            <div
+              className={`overflow-y-auto transition-all duration-300 ease-in-out bg-white ${
+                isProgressOpen ? 'max-h-[180px] opacity-100' : 'max-h-0 opacity-0'
+              }`}
+            >
+              <div className="px-4 py-3">
+                {!hasStudentData ? (
+                  <p className="text-xs text-[#8B7355] opacity-70 leading-relaxed">
+                    No profile data yet. It will appear after whiteboard analyses.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 text-xs text-[#3D2F1E]">
+                    {studentModel && studentModel.mastered_concepts.length > 0 && (
+                      <p><span className="font-bold text-[#428751]">Mastered:</span> {studentModel.mastered_concepts.join(', ')}</p>
+                    )}
+                    {studentModel && studentModel.struggling_concepts.length > 0 && (
+                      <p><span className="font-bold text-[#D93D3D]">Struggling:</span> {studentModel.struggling_concepts.join(', ')}</p>
+                    )}
+                    {studentModel && Object.keys(studentModel.mistake_patterns).length > 0 && (
+                      <p>
+                        <span className="font-bold text-[#8B7355]">Patterns:</span>{' '}
+                        {Object.entries(studentModel.mistake_patterns)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([k, v]) => `${k} (×${v})`)
+                          .join(', ')}
+                      </p>
+                    )}
+                    {studentModel?.skill_ratings && Object.keys(studentModel.skill_ratings).length > 0 && (
+                      <div>
+                        <p className="font-bold text-[#8B7355] mb-1">Skill ratings:</p>
+                        {Object.values(studentModel.skill_ratings)
+                          .sort((a, b) => b.rating - a.rating)
+                          .slice(0, 5)
+                          .map((skill) => (
+                            <p key={skill.title}>{skill.title}: <span className="font-semibold">{skill.rating}</span>/100</p>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
