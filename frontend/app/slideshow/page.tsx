@@ -571,6 +571,12 @@ export default function SlideshowPage() {
                   alt="Power Rule Example"
                   className="w-full h-full object-contain rounded-xl mix-blend-multiply"
                 />
+              ) : current === 3 ? (
+                <img
+                  src="/power_rule_graph.png"
+                  alt="Power Rule Graph"
+                  className="w-full h-full object-contain rounded-xl mix-blend-multiply"
+                />
               ) : currentAiSlide ? (
                 currentAiSlide.diagram_image_url ? (
                   <img
