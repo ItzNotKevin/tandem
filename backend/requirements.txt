@@ -8,4 +8,5 @@ websockets
 python-dotenv
 python-multipart
 requests
+httpx
 PyPDF2
