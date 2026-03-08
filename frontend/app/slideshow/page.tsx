@@ -241,7 +241,29 @@ export default function SlideshowPage() {
   const sessionDataRef = useRef<SessionContextData | null>(null)
   const hasPromptedMoveOnRef = useRef<number | null>(null)
   const awaitingMoveOnReplyRef = useRef(false)
+  const lastReadInstructionRef = useRef('')
+  const lastReadSentAtRef = useRef(0)
+  const narrationLockUntilRef = useRef(0)
+  const lastNarratedSlideRef = useRef<number | null>(null)
+  const nowMsRef = useRef(0)
   const router = useRouter()
+
+  const sendReadInstruction = (script: string, sendFn: (text: string) => void) => {
+    const instruction = `Read this aloud exactly as written:\n${script}`
+    const now = nowMsRef.current
+    const isDuplicateBurst =
+      instruction === lastReadInstructionRef.current &&
+      now - lastReadSentAtRef.current < 1500
+
+    if (isDuplicateBurst) return
+
+    lastReadInstructionRef.current = instruction
+    lastReadSentAtRef.current = now
+    const wordCount = script.trim().split(/\s+/).filter(Boolean).length
+    const lockMs = Math.min(30000, Math.max(6000, wordCount * 450))
+    narrationLockUntilRef.current = now + lockMs
+    sendFn(instruction)
+  }
 
   const conversation = useConversation({
     onConnect: () => {
@@ -260,25 +282,27 @@ export default function SlideshowPage() {
           fileSummaries
         )
       )
-      if (slide?.script) {
-        hasPromptedMoveOnRef.current = null
-        awaitingMoveOnReplyRef.current = false
-        conversation.sendUserMessage(`narrate slide ${currentRef.current + 1}`)
-      }
     },
-    onDisconnect: () => console.log('Disconnected from ElevenLabs'),
+    onDisconnect: () => {
+      console.log('Disconnected from ElevenLabs')
+      lastReadInstructionRef.current = ''
+      lastReadSentAtRef.current = 0
+      narrationLockUntilRef.current = 0
+      lastNarratedSlideRef.current = null
+    },
     onMessage: (message) => {
       if (message.source !== 'user' || !message.message) return
       const text = message.message.trim()
-      const isNoise = !text || text.length <= 3 || /^[.\s\u2026!?]+$/.test(text)
       const isInternalReadCommand = /^narrate slide \d+/i.test(text) || text.startsWith('Read this aloud exactly as written:')
       const isInternalSystemCommand = text.startsWith('[SYSTEM]')
-      if (isNoise || isInternalReadCommand) return
+      if (isInternalReadCommand) return
       if (isInternalSystemCommand) return
+      if (nowMsRef.current < narrationLockUntilRef.current) return
+
+      const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|go ahead|next|continue|let'?s go|move on)\b/i.test(text)
+      const isNegative = /^(no|not yet|wait|hold on|stop)\b/i.test(text)
 
       if (awaitingMoveOnReplyRef.current) {
-        const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|go ahead|next|continue|let'?s go|move on)\b/i.test(text)
-        const isNegative = /^(no|not yet|wait|hold on|stop)\b/i.test(text)
         if (isAffirmative) {
           awaitingMoveOnReplyRef.current = false
           setCurrent((prev) => {
@@ -292,6 +316,16 @@ export default function SlideshowPage() {
           awaitingMoveOnReplyRef.current = false
         }
       }
+
+      const isPunctuationNoise = !text || /^[.\s\u2026!?]+$/.test(text)
+      const isVeryShort = text.length <= 3
+      const isShortFiller = /^(uh|um|hmm|mm|mhm|alright|right)$/i.test(text)
+      if (isPunctuationNoise) return
+      if ((isVeryShort || isShortFiller) && !isAffirmative && !isNegative) return
+
+      // During narration, only interrupt for clear, substantive questions.
+      const looksLikeQuestion = /\?/.test(text) || /^(what|why|how|can|could|would|should|where|when|who|is|are|do|does|did|explain)\b/i.test(text)
+      if (isSpeaking && !(looksLikeQuestion && text.length >= 8)) return
 
       const slides = aiSlidesRef.current || []
       const slide = slides[currentRef.current]
@@ -312,10 +346,23 @@ export default function SlideshowPage() {
 
   const { status, isSpeaking, sendContextualUpdate, sendUserMessage } = conversation
   const isConnected = status === 'connected'
+  const sendContextualUpdateRef = useRef(sendContextualUpdate)
+  const sendUserMessageRef = useRef(sendUserMessage)
 
   // Keep refs in sync so onConnect closure always has latest values
   useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => { aiSlidesRef.current = aiSlides }, [aiSlides])
+  useEffect(() => { sendContextualUpdateRef.current = sendContextualUpdate }, [sendContextualUpdate])
+  useEffect(() => { sendUserMessageRef.current = sendUserMessage }, [sendUserMessage])
+
+  // Shared clock for interruption gating.
+  useEffect(() => {
+    nowMsRef.current = Date.now()
+    const timer = setInterval(() => {
+      nowMsRef.current = Date.now()
+    }, 250)
+    return () => clearInterval(timer)
+  }, [])
 
   // When slide changes while connected, refresh context and narrate that slide
   useEffect(() => {
@@ -323,7 +370,7 @@ export default function SlideshowPage() {
     const slide = aiSlides[current]
     const fileSummaries = formatFileSummaries(sessionDataRef.current)
 
-    sendContextualUpdate(
+    sendContextualUpdateRef.current(
       buildQuestionSupportContext(
         slide,
         current + 1,
@@ -332,29 +379,33 @@ export default function SlideshowPage() {
       )
     )
     if (slide?.script) {
+      if (lastNarratedSlideRef.current === current) return
       hasPromptedMoveOnRef.current = null
       awaitingMoveOnReplyRef.current = false
-      sendUserMessage(`narrate slide ${current + 1}`)
+      lastNarratedSlideRef.current = current
+      sendReadInstruction(slide.script, sendUserMessageRef.current)
     }
-  }, [current, isConnected, aiSlides, sendContextualUpdate, sendUserMessage])
+  }, [current, isConnected, aiSlides])
 
   // After narration ends and silence continues, ask if the student wants to move on.
   useEffect(() => {
     if (!isConnected || isSpeaking || !aiSlides || aiSlides.length === 0) return
     if (hasPromptedMoveOnRef.current === current) return
+    if (nowMsRef.current < narrationLockUntilRef.current) return
 
     const timeout = setTimeout(() => {
       if (!isConnected || isSpeaking) return
       if (currentRef.current !== current) return
       if (hasPromptedMoveOnRef.current === current) return
+      if (nowMsRef.current < narrationLockUntilRef.current) return
 
-      sendUserMessage('[SYSTEM] Ask exactly: "Are you ready to move on?" Then wait silently for the student response.')
+      sendUserMessageRef.current('[SYSTEM] Ask exactly: "Are you ready to move on?" Then wait silently for the student response.')
       hasPromptedMoveOnRef.current = current
       awaitingMoveOnReplyRef.current = true
     }, MOVE_ON_PROMPT_DELAY_MS)
 
     return () => clearTimeout(timeout)
-  }, [isConnected, isSpeaking, current, aiSlides, sendUserMessage])
+  }, [isConnected, isSpeaking, current, aiSlides])
 
   // On mount, load slideshow + narrator context + uploaded material summaries
   useEffect(() => {
@@ -544,6 +595,18 @@ export default function SlideshowPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Debug: exact instruction/script sent to ElevenLabs */}
+              {currentAiSlide?.script && (
+                <div className="rounded-xl px-5 py-4" style={{ backgroundColor: '#f8f1e4', border: '1px dashed #d4c4a8' }}>
+                  <p className="text-[11px] uppercase tracking-widest mb-2" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
+                    Narration Debug
+                  </p>
+                  <pre className="whitespace-pre-wrap text-xs leading-5" style={{ color: '#6b5a3e', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    {`Read this aloud exactly as written:\n${currentAiSlide.script}`}
+                  </pre>
+                </div>
+              )}
 
 
             </div>
