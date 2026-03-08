@@ -125,12 +125,18 @@ Look at the whiteboard carefully. Describe what the student has written and asse
 IF YOU HAVE A PREVIOUS ANALYSIS: Focus ONLY on what is **NEW, CHANGED, or ADDED** since the last time you looked. Do not re-explain the entire board or repeat your previous spoken response. Address only the student's latest step.
 1. Write in natural spoken English only. NO LaTeX, NO markdown, NO symbols like $ or \\int.
    Use words: write "integral" not "\\int", "x squared" not "x^2", "from zero to four" not "[0,4]".
-2. If the board looks blank or has very little, acknowledge that and encourage them to start.
-3. NEVER say you cannot see the work.
+2. Evaluate their work carefully using Chain of Thought:
+   - First, in the "thoughtProcess" field, solve the problem yourself to find the correct final answer.
+   - Then, set "hasMistake" to true ONLY if there is a clear mathematical error.
+   - Set "isSolved" to true ONLY if they have reached the final, correct numerical or algebraic answer to the problem. If they are on the right track but not finished, both should be false!
+3. If the board looks blank or has very little, acknowledge that and encourage them to start.
+4. NEVER say you cannot see the work.
 
 Respond with ONLY this valid JSON (no extra text outside the JSON):
 {{
+    "thoughtProcess": "Briefly solve the problem here first to find the correct answer before assessing the student.",
     "hasMistake": false,
+    "isSolved": false,
     "feedback": "One clear sentence describing what you see on the board in natural English.",
     "spokenResponse": "2-3 sentences Artie should say aloud. Acknowledge what the student wrote, then ask one guiding question to help them take the next step. Never give the answer. Natural spoken English only.",
     "mistakeDescription": "If hasMistake is true, plain English description of the error. Otherwise write 'none'.",

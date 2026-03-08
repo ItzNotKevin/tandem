@@ -14,6 +14,8 @@ export default function WhiteboardPage() {
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
   const [currentQuestion, setCurrentQuestion] = useState("What are we working on today?")
   const [isProblemOpen, setIsProblemOpen] = useState(true)
+  const [hasSolvedCurrent, setHasSolvedCurrent] = useState(false)
+  const [showNextConfirm, setShowNextConfirm] = useState(false)
   const [sessionData, setSessionData] = useState<any>(null)
   const sessionRef = useRef<any>(null)
   // Queue: stores whiteboard analysis if Artie wasn't connected when it arrived
@@ -89,6 +91,16 @@ export default function WhiteboardPage() {
   // We destructure sendUserMessage to forcefully interrupt Artie mid-sentence
   const { status, isSpeaking, sendContextualUpdate, sendUserMessage } = conversation
   const isConnected = status === 'connected'
+
+  const proceedToNext = async () => {
+    setShowNextConfirm(false)
+    setHasSolvedCurrent(false)
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/next`, { method: 'POST' })
+    const data = await res.json()
+    setCurrentQuestion(data.current_problem)
+    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+    if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
+  }
 
   // Keep sendUpdateRef in sync so onMessage can call it without stale closure
   useEffect(() => { sendUpdateRef.current = sendContextualUpdate }, [sendContextualUpdate])
@@ -177,6 +189,9 @@ Greet the student, mention the specific problem, and ask them where they'd like 
     try {
       const result = await analyzeWhiteboard(snapshot.base64, currentQuestion)
       setFeedback(result)
+      if (result.isSolved) {
+        setHasSolvedCurrent(true)
+      }
 
       const status = result.hasMistake ? '⚠️ MISTAKE DETECTED' : '✅ ON TRACK'
       const observation = `[WHITEBOARD UPDATE]
@@ -265,40 +280,58 @@ Use this context to understand what is currently on the board if the student tal
               isProblemOpen ? 'max-h-[500px] pb-6 opacity-100' : 'max-h-0 pb-0 opacity-0'
             }`}
           >
-            <div className="p-5 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm text-center">
-              <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic">
-                "{currentQuestion}"
-              </p>
+            <div className="h-[180px] overflow-y-auto custom-scrollbar p-6 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm">
+              <div className="min-h-full flex items-center justify-center">
+                <p className="text-[#3D2F1E] font-medium text-lg leading-relaxed italic text-center text-balance">
+                  "{currentQuestion}"
+                </p>
+              </div>
             </div>
             
             {sessionData?.practice_problems && sessionData.practice_problems.length > 1 && (
-              <div className="mt-4 flex gap-3">
-                <button 
-                  disabled={sessionData.current_problem_index === 0}
-                  onClick={async () => {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/prev`, { method: 'POST' })
-                    const data = await res.json()
-                    setCurrentQuestion(data.current_problem)
-                    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
-                    if (isConnected) sendContextualUpdate(`The student has moved BACK to a previous problem: "${data.current_problem}". Please help them with this one now.`)
-                  }}
-                  className="flex-1 py-2 px-3 text-[10px] font-black text-[#8B7355] uppercase tracking-wider border border-[#E0D5C5] rounded-xl hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition-all"
-                >
-                  Previous
-                </button>
-                <button 
-                  disabled={sessionData.current_problem_index === sessionData.practice_problems.length - 1}
-                  onClick={async () => {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/next`, { method: 'POST' })
-                    const data = await res.json()
-                    setCurrentQuestion(data.current_problem)
-                    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
-                    if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
-                  }}
-                  className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#D93D3D] hover:bg-[#c13636] uppercase tracking-wider rounded-xl disabled:opacity-30 disabled:hover:bg-[#D93D3D] transition-all shadow-sm"
-                >
-                  Next Problem
-                </button>
+              <div className="mt-4 flex flex-col gap-3">
+                {showNextConfirm ? (
+                  <div className="flex flex-col gap-2 p-3 bg-[#FAF6EF] border border-[#E0D5C5] rounded-xl text-center">
+                    <p className="text-xs text-[#8B7355] font-medium leading-tight">
+                      Are you sure? You haven't solved this problem yet, and they build on each other!
+                    </p>
+                    <div className="flex gap-2 justify-center mt-1">
+                      <button onClick={() => setShowNextConfirm(false)} className="flex-1 py-1.5 px-3 text-[10px] font-black text-[#8B7355] hover:bg-[#E0D5C5]/20 border border-[#E0D5C5] uppercase tracking-wider rounded-lg transition-all">Go Back</button>
+                      <button onClick={proceedToNext} className="flex-1 py-1.5 px-3 text-[10px] font-black text-white hover:bg-[#c13636] bg-[#D93D3D] uppercase tracking-wider rounded-lg transition-all">Continue Anyway</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-3">
+                    <button 
+                      disabled={sessionData.current_problem_index === 0}
+                      onClick={async () => {
+                        setHasSolvedCurrent(false)
+                        setShowNextConfirm(false)
+                        const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/prev`, { method: 'POST' })
+                        const data = await res.json()
+                        setCurrentQuestion(data.current_problem)
+                        setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+                        if (isConnected) sendContextualUpdate(`The student has moved BACK to a previous problem: "${data.current_problem}". Please help them with this one now.`)
+                      }}
+                      className="flex-1 py-2 px-3 text-[10px] font-black text-[#8B7355] uppercase tracking-wider border border-[#E0D5C5] rounded-xl hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition-all shadow-sm"
+                    >
+                      Previous
+                    </button>
+                    <button 
+                      disabled={sessionData.current_problem_index === sessionData.practice_problems.length - 1}
+                      onClick={() => {
+                        if (!hasSolvedCurrent) {
+                          setShowNextConfirm(true)
+                          return
+                        }
+                        proceedToNext()
+                      }}
+                      className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#D93D3D] hover:bg-[#c13636] uppercase tracking-wider rounded-xl disabled:opacity-30 disabled:hover:bg-[#D93D3D] transition-all shadow-sm"
+                    >
+                      Next Problem
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

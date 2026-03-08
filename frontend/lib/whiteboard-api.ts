@@ -4,6 +4,7 @@ const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
 export interface AnalysisResponse {
   hasMistake: boolean
+  isSolved?: boolean
   feedback: string
   mistakeDescription: string
   coordinates?: { x: number; y: number }
