@@ -320,6 +320,7 @@ async def get_content():
 async def generate_lesson(
     files: List[UploadFile] = File(default=[]),
     transcript: str = Form(""),
+    custom_context: str = Form(""),
 ):
   try:
     all_text_parts = []
@@ -377,9 +378,23 @@ async def generate_lesson(
     engagement_note = ""
     if disengaged:
         times = ", ".join([f"{e['timestamp_seconds']}s" for e in disengaged])
-        engagement_note = f"\n\nSTUDENT ENGAGEMENT NOTE: The student was detected as disengaged at these points during the recording: {times}. Pay extra attention to the concepts covered around those timestamps — consider dedicating a slide to re-explaining or reinforcing that material clearly."
+        engagement_note = f"""
 
-    combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}{engagement_note}"
+STUDENT ENGAGEMENT ANALYSIS:
+The student was detected as disengaged at the following points during the lecture recording: {times}.
+
+This means the student likely missed or did not fully absorb the material being covered at those moments. You MUST:
+1. Identify which concepts from the transcript were being discussed at or near those timestamps.
+2. Dedicate at least one slide specifically to re-explaining or reinforcing each concept the student missed.
+3. In those slides, use clearer language, a concrete example, and if applicable a visual or formula to make the concept stick.
+4. In the script for those slides, explicitly re-introduce the concept as if the student is hearing it for the first time — do not assume prior understanding.
+Treat missed content as the highest priority for thorough coverage."""
+
+    custom_context_note = ""
+    if custom_context and custom_context.strip():
+        custom_context_note = f"\n\nINSTRUCTOR CONTEXT:\n{custom_context.strip()}\nApply the above context when deciding tone, focus, depth, and emphasis across all slides."
+
+    combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}{engagement_note}{custom_context_note}"
 
     lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a focused slideshow lesson.
 

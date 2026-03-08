@@ -172,6 +172,7 @@ export default function RecordPage() {
       const formData = new FormData();
       uploadedFiles.forEach((f) => formData.append("files", f));
       formData.append("transcript", transcriptsRef.current.join("\n\n"));
+      if (customContext.trim()) formData.append("custom_context", customContext.trim());
 
       setGeneratingStep("Extracting key concepts...");
       const res = await fetch("/api/generate-lesson", { method: "POST", body: formData });
