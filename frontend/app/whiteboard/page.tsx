@@ -128,6 +128,7 @@ function applySmartLineBreaks(text: string): string {
 
 export default function WhiteboardPage() {
   const boardRef = useRef<TldrawBoardHandle>(null)
+  const [isWipingAway, setIsWipingAway] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [feedback, setFeedback] = useState<AnalysisResponse | null>(null)
   const [transcript, setTranscript] = useState<{ role: 'user' | 'agent', text: string }[]>([])
@@ -157,6 +158,14 @@ export default function WhiteboardPage() {
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcript, feedback])
+
+  // Trigger chalk wipe in on mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsWipingAway(true)
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Fetch session context on mount
   useEffect(() => {
@@ -232,7 +241,7 @@ CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students n
     const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/next`, { method: 'POST' })
     const data = await res.json()
     setCurrentQuestion(data.current_problem)
-    setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+    setSessionData({ ...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem })
     if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
   }
 
@@ -396,8 +405,8 @@ Use this context to understand what is currently on the board if the student tal
             <p className="text-[#8B7355] mb-8 leading-relaxed">
               Incredible work today. You've successfully finished all the practice problems for this section and demonstrated a solid understanding of the material.
             </p>
-            <button 
-              onClick={() => window.location.href = '/'} 
+            <button
+              onClick={() => window.location.href = '/'}
               className="w-full py-4 bg-[#3D2F1E] hover:bg-[#2A2015] text-white rounded-xl font-bold uppercase tracking-widest text-xs transition-colors shadow-sm"
             >
               Return to Dashboard
@@ -405,6 +414,11 @@ Use this context to understand what is currently on the board if the student tal
           </div>
         </div>
       )}
+
+      {/* Wipe Away Layer on Page Load */}
+      <div
+        className={`fixed top-0 left-0 w-[100vw] h-[100vh] z-[9999] bg-[#5A5145] transition-transform duration-700 ease-[cubic-bezier(0.77,0,0.175,1)] pointer-events-none ${isWipingAway ? 'translate-x-[100%]' : 'translate-x-0'}`}
+      />
 
       {/* Main Whiteboard Area */}
       <div className="flex-1 relative flex flex-col">
@@ -440,7 +454,7 @@ Use this context to understand what is currently on the board if the student tal
 
         {/* Question Box */}
         <div className="bg-[#FAF6EF] border-b border-[#E0D5C5]">
-          <button 
+          <button
             onClick={() => setIsProblemOpen(!isProblemOpen)}
             className="w-full flex items-center justify-between px-6 py-4 hover:bg-[#E0D5C5]/20 transition-colors"
           >
@@ -453,11 +467,10 @@ Use this context to understand what is currently on the board if the student tal
               <ChevronDown className="w-4 h-4 text-[#8B7355] opacity-60" />
             )}
           </button>
-          
-          <div 
-            className={`px-6 overflow-hidden transition-all duration-300 ease-in-out ${
-              isProblemOpen ? 'max-h-[500px] pb-6 opacity-100' : 'max-h-0 pb-0 opacity-0'
-            }`}
+
+          <div
+            className={`px-6 overflow-hidden transition-all duration-300 ease-in-out ${isProblemOpen ? 'max-h-[500px] pb-6 opacity-100' : 'max-h-0 pb-0 opacity-0'
+              }`}
           >
             <div className="h-[180px] overflow-y-auto custom-scrollbar p-6 bg-white border border-[#E0D5C5] rounded-2xl shadow-sm">
               <div className="min-h-full flex items-center justify-center">
@@ -466,7 +479,7 @@ Use this context to understand what is currently on the board if the student tal
                 </p>
               </div>
             </div>
-            
+
             {sessionData?.practice_problems && sessionData.practice_problems.length > 1 && (
               <div className="mt-4 flex flex-col gap-3">
                 {showNextConfirm ? (
@@ -481,7 +494,7 @@ Use this context to understand what is currently on the board if the student tal
                   </div>
                 ) : (
                   <div className="flex gap-3">
-                    <button 
+                    <button
                       disabled={sessionData.current_problem_index === 0}
                       onClick={async () => {
                         setHasSolvedCurrent(false)
@@ -489,7 +502,7 @@ Use this context to understand what is currently on the board if the student tal
                         const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/prev`, { method: 'POST' })
                         const data = await res.json()
                         setCurrentQuestion(data.current_problem)
-                        setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
+                        setSessionData({ ...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem })
                         if (isConnected) sendContextualUpdate(`The student has moved BACK to a previous problem: "${data.current_problem}". Please help them with this one now.`)
                       }}
                       className="flex-1 py-2 px-3 text-[10px] font-black text-[#8B7355] uppercase tracking-wider border border-[#E0D5C5] rounded-xl hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition-all shadow-sm"
@@ -497,7 +510,7 @@ Use this context to understand what is currently on the board if the student tal
                       Previous
                     </button>
                     {sessionData.current_problem_index === sessionData.practice_problems.length - 1 ? (
-                      <button 
+                      <button
                         onClick={() => {
                           if (!hasSolvedCurrent) {
                             setShowNextConfirm(true)
@@ -510,7 +523,7 @@ Use this context to understand what is currently on the board if the student tal
                         <PartyPopper className="w-3 h-3" /> Complete Session
                       </button>
                     ) : (
-                      <button 
+                      <button
                         onClick={() => {
                           if (!hasSolvedCurrent) {
                             setShowNextConfirm(true)
@@ -547,8 +560,8 @@ Use this context to understand what is currently on the board if the student tal
               <div
                 key={idx}
                 className={`p-4 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${msg.role === 'agent'
-                    ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] mr-4'
-                    : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] ml-4 border-dashed opacity-80 self-end'
+                  ? 'bg-white border-[#E0D5C5] text-[#3D2F1E] mr-4'
+                  : 'bg-[#FAF6EF] border-[#E0D5C5] text-[#3D2F1E] ml-4 border-dashed opacity-80 self-end'
                   }`}
               >
                 <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
@@ -595,12 +608,12 @@ Use this context to understand what is currently on the board if the student tal
             onClick={toggleVoice}
             disabled={status === 'connecting'}
             className={`w-full rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${isConnected
-                ? isSpeaking
-                  ? 'bg-[#D93D3D] border-[#D93D3D]'
-                  : 'bg-white border-[#D93D3D]'
-                : status === 'connecting'
-                  ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
-                  : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
+              ? isSpeaking
+                ? 'bg-[#D93D3D] border-[#D93D3D]'
+                : 'bg-white border-[#D93D3D]'
+              : status === 'connecting'
+                ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
+                : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
               }`}
           >
             <div className="flex items-center gap-4 p-4">

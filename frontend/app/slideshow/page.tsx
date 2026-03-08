@@ -44,11 +44,11 @@ interface SessionContextData {
 function DerivativeDiagram() {
   return (
     <svg viewBox="0 0 320 220" className="w-full h-full">
-      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5"/>
-      <line x1="40" y1="200" x2="40" y2="20" stroke="#c9b99a" strokeWidth="1.5"/>
-      <path d="M 50 170 Q 130 150 180 90 Q 220 45 290 30" stroke="#8b7355" strokeWidth="2.5" fill="none"/>
-      <line x1="120" y1="30" x2="250" y2="135" stroke="#c17f3a" strokeWidth="1.5" strokeDasharray="6,4"/>
-      <circle cx="180" cy="90" r="5" fill="#c17f3a"/>
+      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5" />
+      <line x1="40" y1="200" x2="40" y2="20" stroke="#c9b99a" strokeWidth="1.5" />
+      <path d="M 50 170 Q 130 150 180 90 Q 220 45 290 30" stroke="#8b7355" strokeWidth="2.5" fill="none" />
+      <line x1="120" y1="30" x2="250" y2="135" stroke="#c17f3a" strokeWidth="1.5" strokeDasharray="6,4" />
+      <circle cx="180" cy="90" r="5" fill="#c17f3a" />
       <text x="188" y="85" fill="#8b7355" fontSize="13" fontFamily="Georgia, serif" fontStyle="italic">f(x)</text>
       <text x="255" y="130" fill="#c17f3a" fontSize="11" fontFamily="Georgia, serif">tangent</text>
     </svg>
@@ -58,9 +58,9 @@ function DerivativeDiagram() {
 function PowerRuleDiagram() {
   return (
     <svg viewBox="0 0 320 220" className="w-full h-full">
-      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5"/>
-      <line x1="40" y1="200" x2="40" y2="20" stroke="#c9b99a" strokeWidth="1.5"/>
-      <path d="M 50 185 Q 120 180 170 130 Q 220 70 290 20" stroke="#8b7355" strokeWidth="2.5" fill="none"/>
+      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5" />
+      <line x1="40" y1="200" x2="40" y2="20" stroke="#c9b99a" strokeWidth="1.5" />
+      <path d="M 50 185 Q 120 180 170 130 Q 220 70 290 20" stroke="#8b7355" strokeWidth="2.5" fill="none" />
       <text x="90" y="100" fill="#6b5a3e" fontSize="28" fontFamily="Georgia, serif" fontStyle="italic">xⁿ</text>
       <text x="165" y="100" fill="#a08060" fontSize="22" fontFamily="sans-serif">→</text>
       <text x="195" y="100" fill="#c17f3a" fontSize="28" fontFamily="Georgia, serif" fontStyle="italic">nxⁿ⁻¹</text>
@@ -71,11 +71,11 @@ function PowerRuleDiagram() {
 function ChainRuleDiagram() {
   return (
     <svg viewBox="0 0 320 220" className="w-full h-full">
-      <rect x="25" y="85" width="90" height="50" rx="10" fill="none" stroke="#c9b99a" strokeWidth="1.5"/>
+      <rect x="25" y="85" width="90" height="50" rx="10" fill="none" stroke="#c9b99a" strokeWidth="1.5" />
       <text x="52" y="116" fill="#6b5a3e" fontSize="15" fontFamily="Georgia, serif" fontStyle="italic">g(x)</text>
-      <line x1="115" y1="110" x2="155" y2="110" stroke="#a08060" strokeWidth="1.5"/>
-      <polygon points="155,105 165,110 155,115" fill="#a08060"/>
-      <rect x="165" y="85" width="110" height="50" rx="10" fill="none" stroke="#c17f3a" strokeWidth="1.5"/>
+      <line x1="115" y1="110" x2="155" y2="110" stroke="#a08060" strokeWidth="1.5" />
+      <polygon points="155,105 165,110 155,115" fill="#a08060" />
+      <rect x="165" y="85" width="110" height="50" rx="10" fill="none" stroke="#c17f3a" strokeWidth="1.5" />
       <text x="185" y="116" fill="#c17f3a" fontSize="15" fontFamily="Georgia, serif" fontStyle="italic">f( g(x) )</text>
       <text x="80" y="165" fill="#a08060" fontSize="11" fontFamily="Georgia, serif">inner</text>
       <text x="195" y="165" fill="#c17f3a" fontSize="11" fontFamily="Georgia, serif">outer(inner)</text>
@@ -86,10 +86,10 @@ function ChainRuleDiagram() {
 function ProductRuleDiagram() {
   return (
     <svg viewBox="0 0 320 220" className="w-full h-full">
-      <rect x="25" y="70" width="265" height="80" rx="10" fill="none" stroke="#c9b99a" strokeWidth="1.5"/>
-      <rect x="25" y="70" width="130" height="80" rx="10" fill="#f5ede0" stroke="#c9b99a" strokeWidth="1.5"/>
+      <rect x="25" y="70" width="265" height="80" rx="10" fill="none" stroke="#c9b99a" strokeWidth="1.5" />
+      <rect x="25" y="70" width="130" height="80" rx="10" fill="#f5ede0" stroke="#c9b99a" strokeWidth="1.5" />
       <text x="72" y="116" fill="#6b5a3e" fontSize="18" fontFamily="Georgia, serif" fontStyle="italic">u(x)</text>
-      <rect x="160" y="70" width="130" height="80" rx="10" fill="#fdf3e3" stroke="#c17f3a" strokeWidth="1.5"/>
+      <rect x="160" y="70" width="130" height="80" rx="10" fill="#fdf3e3" stroke="#c17f3a" strokeWidth="1.5" />
       <text x="207" y="116" fill="#c17f3a" fontSize="18" fontFamily="Georgia, serif" fontStyle="italic">v(x)</text>
       <text x="115" y="116" fill="#a08060" fontSize="18" fontFamily="sans-serif">·</text>
       <text x="90" y="180" fill="#8b7355" fontSize="12" fontFamily="Georgia, serif">d/dx [u·v] = u′v + uv′</text>
@@ -100,12 +100,12 @@ function ProductRuleDiagram() {
 function LimitsDiagram() {
   return (
     <svg viewBox="0 0 320 220" className="w-full h-full">
-      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5"/>
-      <line x1="160" y1="200" x2="160" y2="20" stroke="#c9b99a" strokeWidth="1.5" strokeDasharray="5,4"/>
-      <path d="M 50 170 Q 120 160 150 60" stroke="#8b7355" strokeWidth="2.5" fill="none"/>
-      <path d="M 170 60 Q 200 160 280 170" stroke="#8b7355" strokeWidth="2.5" fill="none"/>
-      <circle cx="150" cy="60" r="5" fill="none" stroke="#c17f3a" strokeWidth="2"/>
-      <circle cx="170" cy="60" r="5" fill="none" stroke="#c17f3a" strokeWidth="2"/>
+      <line x1="30" y1="190" x2="300" y2="190" stroke="#c9b99a" strokeWidth="1.5" />
+      <line x1="160" y1="200" x2="160" y2="20" stroke="#c9b99a" strokeWidth="1.5" strokeDasharray="5,4" />
+      <path d="M 50 170 Q 120 160 150 60" stroke="#8b7355" strokeWidth="2.5" fill="none" />
+      <path d="M 170 60 Q 200 160 280 170" stroke="#8b7355" strokeWidth="2.5" fill="none" />
+      <circle cx="150" cy="60" r="5" fill="none" stroke="#c17f3a" strokeWidth="2" />
+      <circle cx="170" cy="60" r="5" fill="none" stroke="#c17f3a" strokeWidth="2" />
       <text x="140" y="50" fill="#c17f3a" fontSize="11" fontFamily="Georgia, serif">L</text>
       <text x="148" y="205" fill="#a08060" fontSize="11" fontFamily="Georgia, serif">c</text>
     </svg>
@@ -229,6 +229,8 @@ function formatFileSummaries(session: SessionContextData | null) {
 }
 
 export default function SlideshowPage() {
+  const [isWipingAway, setIsWipingAway] = useState(false)
+  const [isWipingForward, setIsWipingForward] = useState(false)
   const [current, setCurrent] = useState(0)
   const [leftHover, setLeftHover] = useState(false)
   const [rightHover, setRightHover] = useState(false)
@@ -247,6 +249,15 @@ export default function SlideshowPage() {
   const lastNarratedSlideRef = useRef<number | null>(null)
   const nowMsRef = useRef(0)
   const router = useRouter()
+
+  useEffect(() => {
+    // Trigger the slide-away animation immediately upon mount 
+    // to complete the cross-page chalk wipe transition
+    const timer = setTimeout(() => {
+      setIsWipingAway(true)
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [])
 
   const sendReadInstruction = (script: string, sendFn: (text: string) => void) => {
     const instruction = `Read this aloud exactly as written:\n${script}`
@@ -458,6 +469,13 @@ export default function SlideshowPage() {
     setCurrent(index)
   }
 
+  const handleRouteWithWipe = (path: string) => {
+    setIsWipingForward(true)
+    setTimeout(() => {
+      router.push(path)
+    }, 600)
+  }
+
   const slideCount = aiSlides ? aiSlides.length : hardcodedSlides.length
   const currentAiSlide = aiSlides ? aiSlides[current] : null
   const currentHardSlide = !aiSlides ? hardcodedSlides[current] : null
@@ -468,16 +486,23 @@ export default function SlideshowPage() {
   const theorem = currentAiSlide?.theorem ?? currentHardSlide?.theorem
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#faf6ef', fontFamily: 'Georgia, serif' }}>
+    <div className="min-h-screen flex flex-col overflow-x-hidden relative" style={{ backgroundColor: '#FBF6EC', fontFamily: 'Georgia, serif' }}>
+
+      {/* Wipe Away Layer on Page Load */}
+      <div
+        className={`fixed top-0 left-0 w-[100vw] h-[100vh] z-[9999] bg-[#5A5145] transition-transform duration-700 ease-[cubic-bezier(0.77,0,0.175,1)] pointer-events-none ${isWipingAway ? 'translate-x-[100%]' : 'translate-x-0'}`}
+      />
+
+      {/* Wipe Forward Layer for Next Page */}
+      <div
+        className={`fixed top-0 left-0 w-[100vw] h-[100vh] z-[9999] bg-[#5A5145] transition-transform duration-[600ms] ease-[cubic-bezier(0.77,0,0.175,1)] pointer-events-none ${isWipingForward ? 'translate-x-0' : '-translate-x-full'}`}
+      />
 
       {/* Header */}
-      <header className="flex items-center justify-between px-12 py-5 border-b" style={{ borderColor: '#e0d5c5' }}>
+      <header className="flex items-center justify-between px-12 py-5 border-b" style={{ borderColor: '#e6d1ad' }}>
         <BrandLogo className="w-32" />
         <div className="flex items-center gap-4">
-          {aiSlides && (
-            <span className="text-xs" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>AI-generated</span>
-          )}
-          <span className="text-sm" style={{ color: '#c9b99a', fontFamily: 'sans-serif' }}>
+          <span className="text-sm" style={{ color: '#8b6b48', fontFamily: 'sans-serif' }}>
             {current + 1} / {slideCount}
           </span>
         </div>
@@ -510,11 +535,11 @@ export default function SlideshowPage() {
 
           {/* Title block */}
           <div className="text-center">
-            <h1 className="text-6xl font-normal tracking-tight mb-2" style={{ color: '#3d2f1e' }}>
+            <h1 className="text-6xl font-normal tracking-tight mb-2" style={{ color: '#2a1d10' }}>
               {title}
             </h1>
             {subtitle && (
-              <p className="text-lg font-normal italic" style={{ color: '#a08060' }}>
+              <p className="text-lg font-normal italic" style={{ color: '#6b5339' }}>
                 {subtitle}
               </p>
             )}
@@ -526,7 +551,7 @@ export default function SlideshowPage() {
             {/* Diagram */}
             <div
               className="w-full lg:w-[26rem] rounded-2xl flex items-center justify-center shrink-0 p-4"
-              style={{ backgroundColor: '#f5ede0', border: '1px solid #e0d5c5' }}
+              style={{ backgroundColor: '#f6ecd9', border: '1px solid #e6d1ad' }}
             >
               {currentAiSlide ? (
                 currentAiSlide.diagram_image_url ? (
@@ -540,14 +565,14 @@ export default function SlideshowPage() {
                       const parent = target.parentElement
                       if (parent) {
                         const fallback = document.createElement('div')
-                        fallback.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#c9b99a;font-family:Georgia,serif;font-style:italic;font-size:14px'
+                        fallback.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#8b6b48;font-family:Georgia,serif;font-style:italic;font-size:14px'
                         fallback.textContent = 'No diagram available'
                         parent.appendChild(fallback)
                       }
                     }}
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center" style={{ color: '#c9b99a', fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '14px' }}>
+                  <div className="w-full h-full flex items-center justify-center" style={{ color: '#8b6b48', fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '14px' }}>
                     No diagram available
                   </div>
                 )
@@ -561,13 +586,13 @@ export default function SlideshowPage() {
 
               {/* Theorem */}
               {theorem && (
-                <div className="rounded-xl px-7 py-5" style={{ backgroundColor: '#f0e6d2', border: '1px solid #d4c4a8' }}>
-                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
+                <div className="rounded-xl px-7 py-5" style={{ backgroundColor: '#f6ecd9', border: '1px solid #e6d1ad' }}>
+                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#6b5339', fontFamily: 'sans-serif' }}>
                     {theorem.label}
                   </p>
                   {currentAiSlide ? (
                     <div
-                      style={{ color: '#5c3d1e', fontSize: '1.4rem' }}
+                      style={{ color: '#2a1d10', fontSize: '1.4rem' }}
                       dangerouslySetInnerHTML={{
                         __html: (() => {
                           try {
@@ -579,7 +604,7 @@ export default function SlideshowPage() {
                       }}
                     />
                   ) : (
-                    <p className="text-2xl" style={{ color: '#5c3d1e', fontFamily: 'Georgia, serif' }}>
+                    <p className="text-2xl" style={{ color: '#2a1d10', fontFamily: 'Georgia, serif' }}>
                       {theorem.formula}
                     </p>
                   )}
@@ -590,19 +615,19 @@ export default function SlideshowPage() {
               <div className="flex flex-col gap-3">
                 {keywords.map((kw) => (
                   <div key={kw} className="flex items-center gap-4">
-                    <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: '#c17f3a' }} />
-                    <span className="text-lg" style={{ color: '#6b5a3e' }}>{kw}</span>
+                    <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: '#8b6b48' }} />
+                    <span className="text-lg" style={{ color: '#5A5145' }}>{kw}</span>
                   </div>
                 ))}
               </div>
 
               {/* Debug: exact instruction/script sent to ElevenLabs */}
               {currentAiSlide?.script && (
-                <div className="rounded-xl px-5 py-4" style={{ backgroundColor: '#f8f1e4', border: '1px dashed #d4c4a8' }}>
-                  <p className="text-[11px] uppercase tracking-widest mb-2" style={{ color: '#a08060', fontFamily: 'sans-serif' }}>
+                <div className="rounded-xl px-5 py-4" style={{ backgroundColor: '#FBF6EC', border: '1px dashed #e6d1ad' }}>
+                  <p className="text-[11px] uppercase tracking-widest mb-2" style={{ color: '#6b5339', fontFamily: 'sans-serif' }}>
                     Narration Debug
                   </p>
-                  <pre className="whitespace-pre-wrap text-xs leading-5" style={{ color: '#6b5a3e', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                  <pre className="whitespace-pre-wrap text-xs leading-5" style={{ color: '#5A5145', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                     {`Read this aloud exactly as written:\n${currentAiSlide.script}`}
                   </pre>
                 </div>
@@ -634,28 +659,14 @@ export default function SlideshowPage() {
       </div>
 
       {/* Footer */}
-      <footer className="flex items-center justify-between px-8 py-7 border-t" style={{ borderColor: '#e0d5c5' }}>
+      <footer className="flex items-center justify-between px-8 py-7 border-t" style={{ borderColor: '#e6d1ad' }}>
 
         {/* Return to Generation */}
         <button
-          onClick={() => router.push('/record')}
-          onMouseEnter={() => setReturnHover(true)}
-          onMouseLeave={() => setReturnHover(false)}
-          style={{
-            fontFamily: 'sans-serif',
-            fontSize: '13px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            color: returnHover ? '#5c3d1e' : '#a08060',
-            background: returnHover ? 'rgba(161,128,96,0.1)' : 'transparent',
-            border: '1px solid',
-            borderColor: returnHover ? '#c9b99a' : '#d4c4a8',
-            borderRadius: '8px',
-            padding: '11px 22px',
-            transition: 'all 200ms ease',
-          }}
+          onClick={() => handleRouteWithWipe('/record')}
+          className="cta-button text-sm"
         >
-          ← Return to Generation
+          <span className="relative z-10">← Return to Generation</span>
         </button>
 
         {/* Center: mic button + dots */}
@@ -665,20 +676,18 @@ export default function SlideshowPage() {
           <button
             onClick={handleToggleNarration}
             disabled={status === 'connecting'}
-            className={`rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${
-              isConnected
-                ? isSpeaking
-                  ? 'bg-[#D93D3D] border-[#D93D3D]'
-                  : 'bg-white border-[#D93D3D]'
-                : status === 'connecting'
-                  ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
-                  : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
-            }`}
+            className={`rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${isConnected
+              ? isSpeaking
+                ? 'bg-[#D93D3D] border-[#D93D3D]'
+                : 'bg-white border-[#D93D3D]'
+              : status === 'connecting'
+                ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
+                : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
+              }`}
           >
             <div className="flex items-center gap-4 p-4">
-              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-                isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
-              }`}>
+              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
+                }`}>
                 {status === 'connecting' ? (
                   <Loader2 className="w-5 h-5 text-[#8B7355] animate-spin" />
                 ) : isConnected ? (
@@ -691,19 +700,17 @@ export default function SlideshowPage() {
                 )}
               </div>
               <div className="text-left">
-                <p className={`text-[10px] font-black uppercase tracking-widest ${
-                  isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8B7355]'
-                }`}>
+                <p className={`text-[10px] font-black uppercase tracking-widest ${isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8b6b48]'
+                  }`}>
                   {status === 'connecting' ? 'Connecting...'
                     : isConnected ? (isSpeaking ? 'Narrating' : 'Listening')
-                    : 'Start Narration'}
+                      : 'Start Narration'}
                 </p>
-                <p className={`text-xs mt-0.5 ${
-                  isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8B7355]') : 'text-[#A08060]'
-                }`}>
+                <p className={`text-xs mt-0.5 ${isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8b6b48]') : 'text-[#6b5339]'
+                  }`}>
                   {status === 'connecting' ? 'Please wait...'
                     : isConnected ? 'Click to end'
-                    : 'Click to begin'}
+                      : 'Click to begin'}
                 </p>
               </div>
               {isSpeaking && (
@@ -738,7 +745,7 @@ export default function SlideshowPage() {
                       width: '8px',
                       height: '8px',
                       borderRadius: '50%',
-                      backgroundColor: i === current ? '#c17f3a' : '#d4c4a8',
+                      backgroundColor: i === current ? '#8b6b48' : '#e6d1ad',
                       transition: 'background-color 200ms ease',
                       border: 'none',
                       padding: 0,
@@ -753,26 +760,67 @@ export default function SlideshowPage() {
 
         {/* Proceed to Problems */}
         <button
-          onClick={() => router.push('/whiteboard')}
-          onMouseEnter={() => setProceedHover(true)}
-          onMouseLeave={() => setProceedHover(false)}
-          style={{
-            fontFamily: 'sans-serif',
-            fontSize: '13px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            color: proceedHover ? '#5c3d1e' : '#a08060',
-            background: proceedHover ? 'rgba(161,128,96,0.1)' : 'transparent',
-            border: '1px solid',
-            borderColor: proceedHover ? '#c9b99a' : '#d4c4a8',
-            borderRadius: '8px',
-            padding: '11px 22px',
-            transition: 'all 200ms ease',
-          }}
+          onClick={() => handleRouteWithWipe('/whiteboard')}
+          className="cta-button text-sm"
         >
-          Proceed to Problems →
+          <span className="relative z-10">Proceed to Problems →</span>
         </button>
       </footer>
+
+      {/* Inject CTA Button Styles globally for this page as well */}
+      <style jsx>{`
+        .cta-button {
+          display: inline-block;
+          padding: 0.625rem 2rem;
+          border-radius: 9999px;
+          background-color: transparent;
+          color: #5A5145;
+          border: 2px solid #5A5145;
+          font-family: Georgia, "Times New Roman", serif;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          position: relative;
+          overflow: hidden;
+        }
+
+        .cta-button::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-color: #5A5145;
+          transform: translateX(-101%);
+          transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+          z-index: 0;
+        }
+
+        .cta-button:hover {
+          color: #F6F4EE;
+          transform: translateY(-2px);
+          box-shadow: 0 10px 20px rgba(90, 81, 69, 0.15);
+        }
+
+        .cta-button:active {
+          transform: translateY(0);
+          box-shadow: 0 5px 10px rgba(90, 81, 69, 0.1);
+        }
+
+        .cta-button:hover::before {
+          transform: translateX(0);
+        }
+
+        .cta-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
+        }
+        
+        .cta-button:disabled::before {
+          transform: translateX(-101%);
+        }
+      `}</style>
     </div>
   )
 }

@@ -4,9 +4,38 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import BrandLogo from "@/components/BrandLogo";
 import EngagementTracker from "@/components/EngagementTracker";
+import CursorTrail from "@/components/CursorTrail";
+import landingStyles from "@/app/landing/landing.module.css";
+
+const LOADING_PHRASES = [
+  "Analyzing your materials...",
+  "Extracting key concepts...",
+  "Structuring the lesson...",
+  "Adding visual elements...",
+  "Generating quiz questions...",
+  "Reviewing content...",
+  "Finalizing details..."
+];
 
 export default function RecordPage() {
   const router = useRouter();
+
+  const [wipePos, setWipePos] = useState<'-100%' | '0%' | '100%'>('0%');
+  const [wipeTransition, setWipeTransition] = useState(true);
+
+  useEffect(() => {
+    // Trigger the slide-away animation immediately upon mount 
+    // to complete the cross-page chalk wipe transition
+    const timer = setTimeout(() => {
+      setWipePos('100%');
+      setTimeout(() => {
+        setWipeTransition(false);
+        setWipePos('-100%');
+      }, 700);
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -29,7 +58,9 @@ export default function RecordPage() {
   const engagementEventsRef = useRef<EngagementEvent[]>([]);
   const recordingStartTimeRef = useRef<number>(0);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generatingStep, setGeneratingStep] = useState("");
+  const [isGeneratingDone, setIsGeneratingDone] = useState(false);
+  const [loadingPhraseIndex, setLoadingPhraseIndex] = useState(0);
+  const [phraseVisible, setPhraseVisible] = useState(true);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [engagementStatus, setEngagementStatus] = useState<"engaged" | "disengaged" | "inactive">("inactive");
   const [disengagementCount, setDisengagementCount] = useState(0);
@@ -52,6 +83,25 @@ export default function RecordPage() {
     }
     return () => clearInterval(interval);
   }, [isRecording, isPaused]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGenerating && !isGeneratingDone) {
+      interval = setInterval(() => {
+        setPhraseVisible(false); // Start fading out
+
+        // Wait for fade out to complete before changing text
+        setTimeout(() => {
+          setLoadingPhraseIndex((prev) => (prev + 1) % LOADING_PHRASES.length);
+          setPhraseVisible(true); // Fade back in
+        }, 1000); // Wait 1s for fade
+      }, 4000); // Change phrase every 4s, sync with the CSS 4s duration
+    } else {
+      setLoadingPhraseIndex(0);
+      setPhraseVisible(true);
+    }
+    return () => clearInterval(interval);
+  }, [isGenerating, isGeneratingDone]);
 
   // Engagement state is driven by EngagementTracker component callbacks
   useEffect(() => {
@@ -164,27 +214,57 @@ export default function RecordPage() {
   };
 
   const handleGenerateLesson = async () => {
-    setIsGenerating(true);
     setGenerationError(null);
-    setGeneratingStep("Analyzing your materials...");
+
+    // 1. Start Chalkboard Wipe IN
+    setWipeTransition(true);
+    setWipePos('0%');
+
+    // 2. We can start the fetch right away, but we will orchestrate the UI
+    const formData = new FormData();
+    uploadedFiles.forEach((f) => formData.append("files", f));
+    formData.append("transcript", transcriptsRef.current.join("\n\n"));
+    if (customContext.trim()) formData.append("custom_context", customContext.trim());
+
+    const fetchPromise = fetch("/api/generate-lesson", { method: "POST", body: formData });
+
+    // 3. Wait for the wipe to cover the screen
+    await new Promise(res => setTimeout(res, 600));
+
+    // 4. Reveal Loading Screen
+    setIsGenerating(true);
+    setWipePos('100%');
+
+    // Make sure we snap the wipe invisibly back to -100% for later reuse once it slides out
+    const wipeResetPromise = new Promise(res => setTimeout(res, 700)).then(() => {
+      setWipeTransition(false);
+      setWipePos('-100%');
+    });
 
     try {
-      const formData = new FormData();
-      uploadedFiles.forEach((f) => formData.append("files", f));
-      formData.append("transcript", transcriptsRef.current.join("\n\n"));
-      if (customContext.trim()) formData.append("custom_context", customContext.trim());
-
-      setGeneratingStep("Extracting key concepts...");
-      const res = await fetch("/api/generate-lesson", { method: "POST", body: formData });
+      // Wait for fetch completion and also ensure wipeReset is fully handled
+      const [res] = await Promise.all([fetchPromise, wipeResetPromise]);
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-
-      setGeneratingStep("Building your lesson...");
       await res.json();
 
+      // Show "Done!" briefly before wiping
+      setPhraseVisible(false);
+      await new Promise(res => setTimeout(res, 300));
+      setIsGeneratingDone(true);
+      setPhraseVisible(true);
+      await new Promise(res => setTimeout(res, 1200));
+
+      // 5. Done generating! Wipe IN again to head to slideshow.
+      setWipeTransition(true);
+      setWipePos('0%');
+
+      await new Promise(res => setTimeout(res, 600));
+      setIsGeneratingDone(false); // Reset for future clicks
       router.push("/slideshow");
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Lesson generation failed:", msg);
@@ -197,56 +277,75 @@ export default function RecordPage() {
   const canGenerate = !isGenerating && !anyTranscribing && (uploadedFiles.length > 0 || recordings.length > 0);
 
   return (
-    <div className="min-h-screen bg-[#F6F4EE] text-[#5A5145] font-sans selection:bg-[#E3D8C3]">
+    <div className="min-h-screen bg-[#F6F4EE] text-[#5A5145] font-sans selection:bg-[#E3D8C3] overflow-x-hidden">
+
+      {/* Universal Wipe Layer */}
+      <div
+        className="fixed top-0 left-0 w-[100vw] h-[100vh] z-[9999] bg-[#5A5145] pointer-events-none"
+        style={{
+          transform: `translateX(${wipePos})`,
+          transition: wipeTransition ? 'transform 0.6s cubic-bezier(0.77, 0, 0.175, 1)' : 'none'
+        }}
+      />
 
       {/* Loading Overlay */}
       {isGenerating && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#F6F4EE]">
-          <div className="flex flex-col items-center gap-8">
-            <div className="relative w-24 h-24">
-              <div className="absolute inset-0 rounded-full border-2 border-[#D1C6B3] animate-ping opacity-30" />
-              <div className="absolute inset-2 rounded-full border-2 border-[#A6977F] animate-ping opacity-50" style={{ animationDelay: "0.3s" }} />
-              <div className="absolute inset-4 rounded-full border-2 border-[#5A5145] animate-ping opacity-70" style={{ animationDelay: "0.6s" }} />
-              <div className="absolute inset-5 flex items-center justify-center">
-                <BrandLogo variant="mark" className="w-8 h-8" />
+        <div className="fixed inset-0 z-50 overflow-hidden">
+          {/* Animated Background and Blobs from Landing */}
+          <div className={`absolute inset-0 ${landingStyles.page}`} style={{ minHeight: '100%', position: 'absolute' }}>
+            <CursorTrail />
+            <div className={landingStyles.blobTopLeft} />
+            <div className={landingStyles.blobBottomRight} />
+          </div>
+
+          <div className="relative z-10 w-full h-full flex flex-col items-center justify-center">
+            <div className="flex flex-col items-center gap-8">
+              <div className="relative w-24 h-24">
+                <div className="absolute inset-0 rounded-full border-2 border-[#D1C6B3] animate-ping opacity-30" />
+                <div className="absolute inset-2 rounded-full border-2 border-[#A6977F] animate-ping opacity-50" style={{ animationDelay: "0.3s" }} />
+                <div className="absolute inset-4 rounded-full border-2 border-[#5A5145] animate-ping opacity-70" style={{ animationDelay: "0.6s" }} />
+                <div className="absolute inset-5 flex items-center justify-center">
+                  <BrandLogo variant="mark" className="w-8 h-8" />
+                </div>
               </div>
-            </div>
-            <div className="text-center space-y-2">
-              <h2 className="text-3xl font-medium tracking-tight text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
-                Crafting your lesson
-              </h2>
-              <p className="text-sm text-[#A6977F] italic animate-pulse">{generatingStep}</p>
-            </div>
-            <div className="flex gap-2">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="w-2 h-2 rounded-full bg-[#A6977F]" style={{ animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-              ))}
+              <div className="text-center space-y-2">
+                <h2 className="text-3xl font-medium tracking-tight text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
+                  Crafting your lesson
+                </h2>
+                <div className="h-6 flex justify-center w-full mt-2" style={{ animation: "pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite" }}>
+                  <p
+                    className={`text-sm text-[#A6977F] italic transition-opacity duration-1000 ease-in-out ${phraseVisible ? "opacity-100" : "opacity-0"} ${isGeneratingDone ? "font-bold not-italic" : ""}`}
+                  >
+                    {isGeneratingDone ? "Done!" : LOADING_PHRASES[loadingPhraseIndex]}
+                  </p>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
       )}
 
-      <header className="flex justify-between items-center px-8 py-4 text-xs font-semibold tracking-[0.15em] text-[#A6977F]">
+      <header className="flex justify-between items-center px-8 py-4 text-xs font-semibold tracking-[0.15em] text-[#8b6b48]">
         <BrandLogo className="w-32" />
-        <div>RECORDING STUDIO</div>
       </header>
 
       <main className="flex flex-col items-center justify-center mt-2 px-6 gap-3">
         <div className="text-center mb-2 space-y-1">
-          <h1 className="text-2xl md:text-3xl font-medium tracking-tight" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
+          <h1 className="text-2xl md:text-3xl font-medium tracking-tight text-[#2a1d10]" style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", Times, serif' }}>
             New Session
           </h1>
-          <p className="italic text-[#A6977F] font-serif text-lg">Upload materials and record your explanation</p>
+          <p className="italic text-[#6b5339] font-serif text-lg">Upload materials and record your explanation</p>
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 w-full max-w-5xl">
 
           {/* Left: File Upload */}
-          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-4 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[220px]">
-            <div className="text-xs tracking-widest text-[#B3A48C] font-semibold mb-6">ATTACHMENTS</div>
+          <div className="flex-1 rounded-2xl bg-[#f6ecd9] p-4 border border-[#e6d1ad] shadow-sm flex flex-col min-h-[220px]">
+            <div className="text-xs tracking-widest text-[#8b6b48] font-semibold mb-6">ATTACHMENTS</div>
 
             <label
-              className={`flex flex-col items-center justify-center w-full rounded-xl border-2 border-dashed cursor-pointer transition p-6 text-center ${isDragging ? "border-[#5A5145] bg-[#EAE4D6]" : "border-[#D1C6B3] bg-transparent hover:bg-[#F4EFE6]"}`}
+              className={`flex flex-col items-center justify-center w-full rounded-xl border-2 border-dashed cursor-pointer transition p-6 text-center ${isDragging ? "border-[#5A5145] bg-[#e6d1ad]" : "border-[#e6d1ad] bg-transparent hover:bg-[#F4EFE6]"}`}
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFileSelect(e.dataTransfer.files); }}
@@ -264,14 +363,14 @@ export default function RecordPage() {
             {uploadedFiles.length > 0 && (
               <div className="mt-4 flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
                 {uploadedFiles.map((f, i) => (
-                  <div key={i} className="flex items-center justify-between bg-[#F4EFE6] px-3 py-2 rounded-lg border border-[#D1C6B3]">
+                  <div key={i} className="flex items-center justify-between bg-[#FBF6EC] px-3 py-2 rounded-lg border border-[#e6d1ad]">
                     <div className="flex items-center gap-2 min-w-0">
                       <svg className="w-4 h-4 text-[#7A9E7E] shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
                       <span className="text-xs text-[#5A5145] truncate">{f.name}</span>
                     </div>
-                    <button onClick={() => handleRemoveFile(i)} className="text-[#A6977F] hover:text-[#D93D3D] transition-colors ml-2 shrink-0">
+                    <button onClick={() => handleRemoveFile(i)} className="text-[#8b6b48] hover:text-[#D93D3D] transition-colors ml-2 shrink-0">
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
@@ -283,8 +382,8 @@ export default function RecordPage() {
           </div>
 
           {/* Right: Recording Interface */}
-          <div className="flex-1 rounded-2xl bg-[#EFEADF] p-4 border border-[#DFD5C2] shadow-sm flex flex-col min-h-[220px]">
-            <div className="text-[10px] tracking-widest text-[#B3A48C] font-semibold mb-4">CONTROLS</div>
+          <div className="flex-1 rounded-2xl bg-[#f6ecd9] p-4 border border-[#e6d1ad] shadow-sm flex flex-col min-h-[220px]">
+            <div className="text-[10px] tracking-widest text-[#8b6b48] font-semibold mb-4">CONTROLS</div>
 
             <div className="flex flex-col flex-1 items-center justify-center space-y-4">
               <div
@@ -298,12 +397,12 @@ export default function RecordPage() {
                 <div className="h-6">
                   {isRecording ? (
                     isPaused ? (
-                      <span className="text-[#A6977F] italic flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-[#A6977F]" /> Paused</span>
+                      <span className="text-[#8b6b48] italic flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-[#8b6b48]" /> Paused</span>
                     ) : (
                       <span className="text-[#D93D3D] font-medium flex items-center gap-2 animate-pulse"><span className="w-2 h-2 rounded-full bg-[#D93D3D]" /> Recording...</span>
                     )
                   ) : (
-                    <span className="text-[#A6977F] italic">Ready to record</span>
+                    <span className="text-[#8b6b48] italic">Ready to record</span>
                   )}
                 </div>
 
@@ -336,7 +435,7 @@ export default function RecordPage() {
                   </button>
                 ) : (
                   <>
-                    <button onClick={handlePauseToggle} className="flex items-center gap-2 px-4 py-2.5 rounded-full border border-[#D1C6B3] text-[#5A5145] hover:bg-[#EAE4D6] transition-colors font-medium text-sm">
+                    <button onClick={handlePauseToggle} className="flex items-center gap-2 px-4 py-2.5 rounded-full border border-[#e6d1ad] text-[#5A5145] hover:bg-[#f6ecd9] transition-colors font-medium text-sm">
                       {isPaused
                         ? <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg> Resume</>
                         : <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> Pause</>
@@ -353,10 +452,10 @@ export default function RecordPage() {
               {recordings.length > 0 && (
                 <div className="w-full flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
                   {recordings.map((rec, i) => (
-                    <div key={rec.id} className="flex items-center justify-between bg-[#F4EFE6] px-3 py-2 rounded-lg border border-[#D1C6B3]">
+                    <div key={rec.id} className="flex items-center justify-between bg-[#FBF6EC] px-3 py-2 rounded-lg border border-[#e6d1ad]">
                       <div className="flex items-center gap-2">
                         {rec.transcribing ? (
-                          <svg className="w-4 h-4 text-[#A6977F] animate-spin" fill="none" viewBox="0 0 24 24">
+                          <svg className="w-4 h-4 text-[#8b6b48] animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                           </svg>
@@ -366,18 +465,18 @@ export default function RecordPage() {
                           </svg>
                         )}
                         <span className="text-xs text-[#5A5145] font-medium">Recording {i + 1}</span>
-                        <span className="text-xs text-[#A6977F] font-mono">{formatTime(rec.duration)}</span>
-                        {rec.transcribing && <span className="text-xs text-[#A6977F] italic">Transcribing...</span>}
+                        <span className="text-xs text-[#8b6b48] font-mono">{formatTime(rec.duration)}</span>
+                        {rec.transcribing && <span className="text-xs text-[#8b6b48] italic">Transcribing...</span>}
                       </div>
                       {!rec.transcribing && (
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => setViewingRecording(rec)}
-                            className="text-xs text-[#5A5145] hover:text-[#453D32] border border-[#D1C6B3] hover:border-[#A6977F] rounded px-2 py-0.5 transition-colors"
+                            className="text-xs text-[#5A5145] hover:text-[#453D32] border border-[#e6d1ad] hover:border-[#8b6b48] rounded px-2 py-0.5 transition-colors"
                           >
                             View
                           </button>
-                          <button onClick={() => handleRemoveRecording(rec.id, i)} className="text-[#A6977F] hover:text-[#D93D3D] transition-colors">
+                          <button onClick={() => handleRemoveRecording(rec.id, i)} className="text-[#8b6b48] hover:text-[#D93D3D] transition-colors">
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                             </svg>
@@ -399,12 +498,12 @@ export default function RecordPage() {
         )}
 
         <div className="mt-1 w-full max-w-5xl flex flex-col gap-1">
-          <label className="text-[10px] tracking-widest text-[#B3A48C] font-semibold pl-1">ADDITIONAL CONTEXT (OPTIONAL)</label>
+          <label className="text-[10px] tracking-widest text-[#8b6b48] font-semibold pl-1">ADDITIONAL CONTEXT (OPTIONAL)</label>
           <textarea
             value={customContext}
             onChange={(e) => setCustomContext(e.target.value)}
             placeholder="E.g., Focus on standard deviation, keep the tone encouraging..."
-            className="w-full bg-[#EFEADF] border border-[#DFD5C2] rounded-xl p-3 text-sm text-[#5A5145] placeholder-[#B3A48C] focus:outline-none focus:border-[#A6977F] transition-colors resize-y min-h-[60px]"
+            className="w-full bg-[#f6ecd9] border border-[#e6d1ad] rounded-xl p-3 text-sm text-[#5A5145] placeholder-[#8b6b48] focus:outline-none focus:border-[#5A5145] transition-colors resize-y min-h-[60px]"
           />
         </div>
 
@@ -412,120 +511,166 @@ export default function RecordPage() {
           <button
             onClick={handleGenerateLesson}
             disabled={!canGenerate}
-            className="px-8 py-3 rounded-full bg-[#5A5145] text-[#F6F4EE] hover:bg-[#453D32] transition-all shadow-md font-semibold tracking-wider text-sm hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
+            className="cta-button text-sm"
           >
-            GENERATE LESSON
+            <span className="relative z-10">Generate Lesson</span>
           </button>
         </div>
       </main>
 
       {/* Transcript Viewer Modal */}
-      {viewingRecording && (() => {
-        const rec = viewingRecording;
-        const words = rec.words ?? [];
-        const events = rec.engagementEvents ?? [];
+      {
+        viewingRecording && (() => {
+          const rec = viewingRecording;
+          const words = rec.words ?? [];
+          const events = rec.engagementEvents ?? [];
 
-        // Build disengaged intervals from events
-        const intervals: { start: number; end: number }[] = [];
-        let disStart: number | null = null;
-        for (const ev of events) {
-          if (!ev.engaged && disStart === null) disStart = ev.timestamp_seconds;
-          if (ev.engaged && disStart !== null) {
-            intervals.push({ start: disStart, end: ev.timestamp_seconds });
-            disStart = null;
+          // Build disengaged intervals from events
+          const intervals: { start: number; end: number }[] = [];
+          let disStart: number | null = null;
+          for (const ev of events) {
+            if (!ev.engaged && disStart === null) disStart = ev.timestamp_seconds;
+            if (ev.engaged && disStart !== null) {
+              intervals.push({ start: disStart, end: ev.timestamp_seconds });
+              disStart = null;
+            }
           }
-        }
-        if (disStart !== null) intervals.push({ start: disStart, end: rec.duration });
+          if (disStart !== null) intervals.push({ start: disStart, end: rec.duration });
 
-        const isWordDisengaged = (w: WordStamp) => {
-          if (w.type === "spacing") return false;
-          const mid = (w.start + w.end) / 2;
-          return intervals.some((iv) => mid >= iv.start && mid <= iv.end);
-        };
+          const isWordDisengaged = (w: WordStamp) => {
+            if (w.type === "spacing") return false;
+            const mid = (w.start + w.end) / 2;
+            return intervals.some((iv) => mid >= iv.start && mid <= iv.end);
+          };
 
-        const totalDis = intervals.reduce((acc, iv) => acc + (iv.end - iv.start), 0);
-        const pct = rec.duration > 0 ? Math.round((totalDis / rec.duration) * 100) : 0;
+          const totalDis = intervals.reduce((acc, iv) => acc + (iv.end - iv.start), 0);
+          const pct = rec.duration > 0 ? Math.round((totalDis / rec.duration) * 100) : 0;
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setViewingRecording(null)}>
-            <div className="bg-[#F6F4EE] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-              {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-[#DFD5C2]">
-                <div>
-                  <h2 className="text-lg font-medium text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, serif' }}>Transcript</h2>
-                  <p className="text-xs text-[#A6977F] mt-0.5">{formatTime(rec.duration)} recording · {pct}% disengaged</p>
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setViewingRecording(null)}>
+              <div className="bg-[#F6F4EE] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-[#DFD5C2]">
+                  <div>
+                    <h2 className="text-lg font-medium text-[#5A5145]" style={{ fontFamily: 'ui-serif, Georgia, serif' }}>Transcript</h2>
+                    <p className="text-xs text-[#A6977F] mt-0.5">{formatTime(rec.duration)} recording · {pct}% disengaged</p>
+                  </div>
+                  <button onClick={() => setViewingRecording(null)} className="text-[#A6977F] hover:text-[#5A5145] transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
-                <button onClick={() => setViewingRecording(null)} className="text-[#A6977F] hover:text-[#5A5145] transition-colors">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
 
-              {/* Timeline bar */}
-              {rec.duration > 0 && (
-                <div className="px-6 pt-4">
-                  <div className="text-xs text-[#A6977F] mb-1 tracking-wider">ATTENTION TIMELINE</div>
-                  <div className="relative h-3 rounded-full bg-[#E8F5E9] overflow-hidden">
-                    {intervals.map((iv, idx) => (
-                      <div
-                        key={idx}
-                        className="absolute top-0 h-full bg-[#FDECEA] border-l border-r border-[#F5C6C6]"
-                        style={{
-                          left: `${(iv.start / rec.duration) * 100}%`,
-                          width: `${((iv.end - iv.start) / rec.duration) * 100}%`,
-                        }}
-                      />
-                    ))}
+                {/* Timeline bar */}
+                {rec.duration > 0 && (
+                  <div className="px-6 pt-4">
+                    <div className="text-xs text-[#A6977F] mb-1 tracking-wider">ATTENTION TIMELINE</div>
+                    <div className="relative h-3 rounded-full bg-[#E8F5E9] overflow-hidden">
+                      {intervals.map((iv, idx) => (
+                        <div
+                          key={idx}
+                          className="absolute top-0 h-full bg-[#FDECEA] border-l border-r border-[#F5C6C6]"
+                          style={{
+                            left: `${(iv.start / rec.duration) * 100}%`,
+                            width: `${((iv.end - iv.start) / rec.duration) * 100}%`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex justify-between text-xs text-[#A6977F] mt-1">
+                      <span>0:00</span>
+                      <span>{formatTime(rec.duration)}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-2 text-xs text-[#A6977F]">
+                      <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#E8F5E9] border border-[#7A9E7E] inline-block" /> Engaged</span>
+                      <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#FDECEA] border border-[#F5C6C6] inline-block" /> Disengaged</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-xs text-[#A6977F] mt-1">
-                    <span>0:00</span>
-                    <span>{formatTime(rec.duration)}</span>
-                  </div>
-                  <div className="flex items-center gap-3 mt-2 text-xs text-[#A6977F]">
-                    <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#E8F5E9] border border-[#7A9E7E] inline-block" /> Engaged</span>
-                    <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[#FDECEA] border border-[#F5C6C6] inline-block" /> Disengaged</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Transcript body */}
-              <div className="overflow-y-auto px-6 py-4 max-h-[40vh]">
-                {words.length > 0 ? (
-                  <p className="text-sm text-[#5A5145] leading-relaxed">
-                    {words.map((w, i) => (
-                      w.type === "spacing" ? (
-                        <span key={i}> </span>
-                      ) : (
-                        <span
-                          key={i}
-                          className={`rounded px-0.5 transition-colors ${isWordDisengaged(w) ? "bg-[#FDECEA] text-[#D93D3D]" : ""}`}
-                          title={isWordDisengaged(w) ? "Disengaged" : undefined}
-                        >
-                          {w.text}
-                        </span>
-                      )
-                    ))}
-                  </p>
-                ) : rec.transcript ? (
-                  <p className="text-sm text-[#5A5145] leading-relaxed">{rec.transcript}</p>
-                ) : rec.transcript === "" ? (
-                  <p className="text-sm text-[#A6977F] italic">No speech detected in this recording.</p>
-                ) : (
-                  <p className="text-sm text-[#A6977F] italic">Transcription failed. Check backend is running.</p>
                 )}
+
+                {/* Transcript body */}
+                <div className="overflow-y-auto px-6 py-4 max-h-[40vh]">
+                  {words.length > 0 ? (
+                    <p className="text-sm text-[#5A5145] leading-relaxed">
+                      {words.map((w, i) => (
+                        w.type === "spacing" ? (
+                          <span key={i}> </span>
+                        ) : (
+                          <span
+                            key={i}
+                            className={`rounded px-0.5 transition-colors ${isWordDisengaged(w) ? "bg-[#FDECEA] text-[#D93D3D]" : ""}`}
+                            title={isWordDisengaged(w) ? "Disengaged" : undefined}
+                          >
+                            {w.text}
+                          </span>
+                        )
+                      ))}
+                    </p>
+                  ) : rec.transcript ? (
+                    <p className="text-sm text-[#5A5145] leading-relaxed">{rec.transcript}</p>
+                  ) : rec.transcript === "" ? (
+                    <p className="text-sm text-[#A6977F] italic">No speech detected in this recording.</p>
+                  ) : (
+                    <p className="text-sm text-[#A6977F] italic">Transcription failed. Check backend is running.</p>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()
+      }
 
       <style jsx>{`
         @keyframes bounce {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-8px); }
         }
+
+        .cta-button {
+          display: inline-block;
+          padding: 0.625rem 2rem; /* Reduced padding from 1rem 2.5rem to be closer to 'Start Recording' */
+          border-radius: 9999px;
+          background-color: transparent;
+          color: #5A5145;
+          border: 2px solid #5A5145;
+          font-family: Georgia, "Times New Roman", serif;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          position: relative;
+          overflow: hidden;
+          z-index: 1;
+        }
+
+        .cta-button:hover:not(:disabled) {
+          color: #F6F4EE;
+          transform: translateY(-2px);
+          box-shadow: 0 10px 25px -5px rgba(90, 81, 69, 0.2), 0 8px 10px -6px rgba(90, 81, 69, 0.1);
+        }
+
+        .cta-button::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-color: #5A5145;
+          z-index: -1;
+          transform: translateX(-101%);
+          transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .cta-button:hover:not(:disabled)::before {
+          transform: translateX(0);
+        }
+
+        .cta-button:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          border-color: #A6977F;
+          color: #A6977F;
+        }
       `}</style>
-    </div>
+    </div >
   );
 }

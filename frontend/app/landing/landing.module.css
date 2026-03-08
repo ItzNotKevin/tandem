@@ -59,6 +59,43 @@
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: #8b6b48;
+  animation: titleFadeIn 0.8s ease-out 0.1s both;
+}
+
+.kickerTextWrapper {
+  font-family: var(--font-shadows), cursive;
+  font-size: 2.25rem;
+  color: #5A5145;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+  display: inline-block;
+  position: relative;
+  /* ensure absolute children position correctly */
+  transform: translateY(6px) rotate(-2deg);
+  padding-right: 0.15em;
+  /* Prevent cursive cut-off on the right edge */
+  clip-path: polygon(0 0, 0 0, 0 100%, 0% 100%);
+  animation: drawTextReveal 1.2s cubic-bezier(0.25, 1, 0.5, 1) 0.8s forwards;
+}
+
+.highlightUnderline {
+  position: absolute;
+  bottom: 6px;
+  /* Raised slightly more for the larger Caveat font */
+  left: 0;
+  width: 100%;
+  height: 12px;
+  overflow: visible;
+  z-index: -1;
+  opacity: 0.9;
+}
+
+.highlightUnderline path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  /* text takes 1.2s to draw (starts at 0.8s). Start underline around 1.6s */
+  animation: drawUnderline 0.5s cubic-bezier(0.4, 0, 0.2, 1) 1.6s forwards;
 }
 
 .title {
@@ -68,7 +105,7 @@
   font-size: clamp(3rem, 6.3vw, 5.25rem);
   line-height: 1.08;
   color: #2a1d10;
-  animation: titleFadeIn 1s ease-out both;
+  animation: titleFadeIn 0.8s ease-out 0.3s both;
 }
 
 .highlight {
@@ -87,24 +124,28 @@
   font-size: clamp(1.25rem, 2.5vw, 2rem);
   line-height: 1.4;
   color: #6b5339;
+  animation: titleFadeIn 0.8s ease-out 0.5s both;
 }
 
 .cta {
   margin-top: 3.5rem;
-  height: 48px;
-  padding: 0 4rem;
+  height: 52px;
+  padding: 0 3.5rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #b8926a;
+  border: 1px solid #5A5145;
   border-radius: 9999px;
-  background: #b48349;
-  color: #fff8eb;
+  background: transparent;
+  color: #5A5145;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.25rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
   text-decoration: none;
   position: relative;
   overflow: hidden;
+  transition: box-shadow 0.3s ease, color 0.3s ease, transform 0.3s ease;
+  animation: titleFadeIn 0.8s ease-out 0.7s both;
 }
 
 .ctaText {
@@ -115,11 +156,21 @@
 .cta::before {
   content: '';
   position: absolute;
-  inset: 0;
-  background: #7a4f2e;
-  transform: translateX(-100%);
-  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #5A5145;
+  transform: translateX(-101%);
+  transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1);
   border-radius: inherit;
+  z-index: 0;
+}
+
+.cta:hover {
+  color: #F6F4EE;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(90, 81, 69, 0.15);
 }
 
 .cta:hover::before {
@@ -146,29 +197,35 @@
   0% {
     background-position: 0% 50%;
   }
+
   50% {
     background-position: 100% 50%;
   }
+
   100% {
     background-position: 0% 50%;
   }
 }
 
 @keyframes floatSlow {
+
   0%,
   100% {
     transform: translate3d(0, 0, 0);
   }
+
   50% {
     transform: translate3d(0, -16px, 0);
   }
 }
 
 @keyframes floatDelayed {
+
   0%,
   100% {
     transform: translate3d(0, 0, 0);
   }
+
   50% {
     transform: translate3d(-18px, 14px, 0);
   }
@@ -183,10 +240,40 @@
 @keyframes titleFadeIn {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(24px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+.wipeLayer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #5A5145;
+  z-index: 9999;
+  transform: translateX(-100%);
+  transition: transform 0.6s cubic-bezier(0.77, 0, 0.175, 1);
+  pointer-events: none;
+}
+
+.wipeLayer.wipeActive {
+  transform: translateX(0);
+}
+
+@keyframes drawTextReveal {
+  to {
+    clip-path: polygon(0 0, 105% 0, 105% 100%, 0% 100%);
+  }
+}
+
+@keyframes drawUnderline {
+  to {
+    stroke-dashoffset: 0;
   }
 }
