@@ -4,8 +4,9 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import TldrawBoard, { TldrawBoardHandle } from '@/components/TldrawBoard'
 import { analyzeWhiteboard, AnalysisResponse } from '@/lib/whiteboard-api'
 import BrandLogo from '@/components/BrandLogo'
-import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp } from 'lucide-react'
+import { Brain, Loader2, MessageSquare, AlertCircle, Mic, MicOff, ChevronDown, ChevronUp, PartyPopper, CheckCircle } from 'lucide-react'
 import LatexRenderer from '@/components/LatexRenderer'
+import confetti from 'canvas-confetti'
 import { useConversation } from '@elevenlabs/react'
 
 function normalizeProblemMath(text: string): string {
@@ -134,6 +135,7 @@ export default function WhiteboardPage() {
   const [isProblemOpen, setIsProblemOpen] = useState(true)
   const [hasSolvedCurrent, setHasSolvedCurrent] = useState(false)
   const [showNextConfirm, setShowNextConfirm] = useState(false)
+  const [isSessionComplete, setIsSessionComplete] = useState(false)
   const [sessionData, setSessionData] = useState<any>(null)
   const sessionRef = useRef<any>(null)
   // Queue: stores whiteboard analysis if Artie wasn't connected when it arrived
@@ -181,7 +183,10 @@ export default function WhiteboardPage() {
       const currentData = sessionRef.current
       if (currentData) {
         const fileContext = (currentData.file_summaries || []).map((f: any) => `- ${f.filename}: ${f.summary}`).join('\n')
-        const fullContext = `Context: The student is working on the problem: "${currentData.current_problem}". Background materials they've uploaded:\n${fileContext}\nYou are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.`
+        const fullContext = `Context: The student is working on the problem: "${currentData.current_problem}". Background materials they've uploaded:\n${fileContext}\n
+You are watching their whiteboard. Greet them and mention you're ready to help with this specific problem.
+
+CRITICAL INSTRUCTION: You must be extremely comfortable with silence. Students need time to think and solve math! If you ask a question and do not receive an immediate response, do NOT ask follow-up questions like "Are you there?", "Hello?", or "Did you hear me?". Simply wait patiently for as long as it takes until they draw something or speak to you.`
         console.log('Sending initial context to Artie:', fullContext)
         conversation.sendContextualUpdate(fullContext)
       }
@@ -217,11 +222,31 @@ export default function WhiteboardPage() {
   const proceedToNext = async () => {
     setShowNextConfirm(false)
     setHasSolvedCurrent(false)
+    
+    // If we're on the last problem, complete the session
+    if (sessionData && sessionData.current_problem_index === sessionData.practice_problems.length - 1) {
+      triggerSessionComplete()
+      return
+    }
+
     const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/problem/next`, { method: 'POST' })
     const data = await res.json()
     setCurrentQuestion(data.current_problem)
     setSessionData({...sessionData, current_problem_index: data.current_problem_index, current_problem: data.current_problem})
     if (isConnected) sendContextualUpdate(`The student has moved ON to the next problem: "${data.current_problem}". Please help them with this completely new problem now.`)
+  }
+
+  const triggerSessionComplete = () => {
+    setIsSessionComplete(true)
+    confetti({
+      particleCount: 150,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ['#D93D3D', '#8B7355', '#E0D5C5']
+    })
+    if (isConnected) {
+      sendContextualUpdate(`The student has successfully completed ALL their practice problems for this study session! Congratulate them enthusiastically for their hard work!`)
+    }
   }
 
   // Keep sendUpdateRef in sync so onMessage can call it without stale closure
@@ -315,27 +340,38 @@ Greet the student, mention the specific problem, and ask them where they'd like 
         setHasSolvedCurrent(true)
       }
 
-      const status = result.hasMistake ? '⚠️ MISTAKE DETECTED' : '✅ ON TRACK'
+      let promptStatus = '✅ ON TRACK'
+      if (result.hasMistake) promptStatus = '⚠️ MISTAKE DETECTED'
+      if (result.isSolved) promptStatus = '🏆 CORRECT ANSWER ACHIEVED'
+
       const observation = `[WHITEBOARD UPDATE]
-STATUS: ${status}
+STATUS: ${promptStatus}
 VISUAL ANALYSIS: ${result.feedback}
 ${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}`
 
       // Always store the background visual context for regular chit-chat
       latestAnalysisRef.current = `[CURRENT WHITEBOARD STATE (Background Data)]
-STATUS: ${status}
+STATUS: ${promptStatus}
 VISUAL ANALYSIS: ${result.feedback}
 ${result.hasMistake ? `ERROR: ${result.mistakeDescription}` : ''}
 Use this context to understand what is currently on the board if the student talks about their work.`
+
+      let aiInstruction = "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually."
+      
+      if (result.isSolved) {
+        aiInstruction = "\n\nINSTRUCTION: INCREDIBLE! The student has just successfully SOLVED the entire problem and got the final correct answer! You must immediately and enthusiastically congratulate them by name or say 'Congrats you got the correct answer!' Celebrate this victory!"
+      } else if (result.hasMistake) {
+        aiInstruction = "\n\nINSTRUCTION: The student just made a mathematical mistake on the board. Gently and politely point out where they went wrong based on the analysis, and ask a guiding question to help them fix it."
+      }
 
       if (isConnected) {
         // We interrupt Artie by sending the visual observation as a system event.
         // Because ElevenLabs is the main conversational LLM, it will naturally 
         // halt its current output, process this new information, and dynamically pivot!
-        sendUserMessage(observation + "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually.")
+        sendUserMessage(observation + aiInstruction)
       } else {
         // Artie offline — queue for next connection
-        pendingObservationRef.current = observation + "\n\nINSTRUCTION: The student just added this to the whiteboard. If you were speaking, gracefully halt and immediately pivot to address this new development. Do not repeat exactly what you were saying before. Acknowledge what they wrote contextually."
+        pendingObservationRef.current = observation + aiInstruction
         console.log('Artie offline — observation queued for next connection.')
       }
 
@@ -348,7 +384,28 @@ Use this context to understand what is currently on the board if the student tal
   }
 
   return (
-    <div className="flex w-screen h-screen bg-[#FAF6EF] overflow-hidden font-serif">
+    <div className="flex w-screen h-screen bg-[#FAF6EF] overflow-hidden font-serif relative">
+      {/* Session Complete Overlay */}
+      {isSessionComplete && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#FAF6EF]/90 backdrop-blur-sm transition-all duration-500">
+          <div className="bg-white p-10 rounded-3xl shadow-xl border border-[#E0D5C5] text-center max-w-md mx-4 transform animate-in zoom-in-95 duration-300">
+            <div className="mx-auto w-16 h-16 bg-[#D93D3D]/10 rounded-full flex items-center justify-center mb-6">
+              <PartyPopper className="w-8 h-8 text-[#D93D3D]" />
+            </div>
+            <h1 className="text-3xl font-black text-[#3D2F1E] mb-3">Session Complete!</h1>
+            <p className="text-[#8B7355] mb-8 leading-relaxed">
+              Incredible work today. You've successfully finished all the practice problems for this section and demonstrated a solid understanding of the material.
+            </p>
+            <button 
+              onClick={() => window.location.href = '/'} 
+              className="w-full py-4 bg-[#3D2F1E] hover:bg-[#2A2015] text-white rounded-xl font-bold uppercase tracking-widest text-xs transition-colors shadow-sm"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Whiteboard Area */}
       <div className="flex-1 relative flex flex-col">
         {/* Brand Header */}
@@ -439,19 +496,33 @@ Use this context to understand what is currently on the board if the student tal
                     >
                       Previous
                     </button>
-                    <button 
-                      disabled={sessionData.current_problem_index === sessionData.practice_problems.length - 1}
-                      onClick={() => {
-                        if (!hasSolvedCurrent) {
-                          setShowNextConfirm(true)
-                          return
-                        }
-                        proceedToNext()
-                      }}
-                      className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#D93D3D] hover:bg-[#c13636] uppercase tracking-wider rounded-xl disabled:opacity-30 disabled:hover:bg-[#D93D3D] transition-all shadow-sm"
-                    >
-                      Next Problem
-                    </button>
+                    {sessionData.current_problem_index === sessionData.practice_problems.length - 1 ? (
+                      <button 
+                        onClick={() => {
+                          if (!hasSolvedCurrent) {
+                            setShowNextConfirm(true)
+                            return
+                          }
+                          proceedToNext()
+                        }}
+                        className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#428751] hover:bg-[#32693e] uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                      >
+                        <PartyPopper className="w-3 h-3" /> Complete Session
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => {
+                          if (!hasSolvedCurrent) {
+                            setShowNextConfirm(true)
+                            return
+                          }
+                          proceedToNext()
+                        }}
+                        className="flex-1 py-2 px-3 text-[10px] font-black text-white bg-[#D93D3D] hover:bg-[#c13636] uppercase tracking-wider rounded-xl transition-all shadow-sm"
+                      >
+                        Next Problem
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -490,17 +561,28 @@ Use this context to understand what is currently on the board if the student tal
             ))}
 
             {feedback && (
-              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${feedback.hasMistake
-                  ? 'bg-white border-[#D93D3D] text-[#D93D3D]'
+              <div className={`p-5 rounded-2xl border animate-in slide-in-from-bottom-2 duration-300 shadow-sm ${
+                feedback.hasMistake
+                  ? 'bg-red-50 border-[#D93D3D]/50 text-[#D93D3D]'
+                  : feedback.isSolved
+                  ? 'bg-green-50 border-[#428751]/50 text-[#428751]'
                   : 'bg-white border-[#E0D5C5] text-[#3D2F1E]'
-                }`}>
+              }`}>
                 <div className="flex items-start gap-3">
-                  <MessageSquare className={`w-5 h-5 shrink-0 ${feedback.hasMistake ? 'text-[#D93D3D]' : 'text-[#D93D3D]'}`} />
+                  {feedback.hasMistake ? (
+                    <AlertCircle className="w-5 h-5 shrink-0 text-[#D93D3D]" />
+                  ) : feedback.isSolved ? (
+                    <CheckCircle className="w-5 h-5 shrink-0 text-[#428751]" />
+                  ) : (
+                    <MessageSquare className="w-5 h-5 shrink-0 text-[#8B7355]" />
+                  )}
                   <div>
-                    <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-60 ${feedback.hasMistake ? 'text-[#D93D3D]' : ''}`}>
-                      {feedback.hasMistake ? 'Mistake Spotted' : 'Observation'}
+                    <p className={`font-bold text-[10px] uppercase tracking-widest mb-2 opacity-80 ${
+                      feedback.hasMistake ? 'text-[#D93D3D]' : feedback.isSolved ? 'text-[#428751]' : 'text-[#8B7355]'
+                    }`}>
+                      {feedback.hasMistake ? 'Mistake Spotted' : feedback.isSolved ? 'Correct Answer!' : 'Observation'}
                     </p>
-                    <p className="text-sm leading-relaxed">{feedback.feedback}</p>
+                    <p className="text-sm leading-relaxed text-[#3D2F1E]">{feedback.feedback}</p>
                   </div>
                 </div>
               </div>
