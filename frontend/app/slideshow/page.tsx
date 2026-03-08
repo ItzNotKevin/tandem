@@ -642,26 +642,14 @@ export default function SlideshowPage() {
               )}
 
               {/* Keywords */}
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-4">
                 {keywords.map((kw) => (
-                  <div key={kw} className="flex items-center gap-4">
-                    <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: '#8b6b48' }} />
-                    <span className="text-lg" style={{ color: '#5A5145' }}>{kw}</span>
+                  <div key={kw} className="flex items-start gap-4">
+                    <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-2" style={{ backgroundColor: '#8b6b48' }} />
+                    <span className="text-lg leading-snug" style={{ color: '#5A5145' }}>{kw}</span>
                   </div>
                 ))}
               </div>
-
-              {/* Debug: exact instruction/script sent to ElevenLabs */}
-              {currentAiSlide?.script && (
-                <div className="rounded-xl px-5 py-4" style={{ backgroundColor: '#FBF6EC', border: '1px dashed #e6d1ad' }}>
-                  <p className="text-[11px] uppercase tracking-widest mb-2" style={{ color: '#6b5339', fontFamily: 'sans-serif' }}>
-                    Narration Debug
-                  </p>
-                  <pre className="whitespace-pre-wrap text-xs leading-5" style={{ color: '#5A5145', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    {`Read this aloud exactly as written:\n${currentAiSlide.script}`}
-                  </pre>
-                </div>
-              )}
 
 
             </div>
