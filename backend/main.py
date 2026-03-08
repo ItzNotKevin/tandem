@@ -288,6 +288,7 @@ async def generate_lesson(
   try:
     all_text_parts = []
     image_files = []
+    uploaded_file_summaries = []
 
     for file in files:
         if not file.filename:
@@ -299,7 +300,13 @@ async def generate_lesson(
             Part.from_data(data=contents, mime_type=file.content_type),
             "Extract all text from this document exactly as it appears. Return only raw text."
         ])
-        all_text_parts.append(text_response.text.strip())
+        extracted = text_response.text.strip()
+        all_text_parts.append(extracted)
+        uploaded_file_summaries.append({
+            "filename": file.filename,
+            "type": file.content_type,
+            "summary": extracted[:2000],  # keep summary concise for whiteboard context
+        })
 
         # Extract images
         if file.content_type == "application/pdf":
@@ -338,38 +345,43 @@ async def generate_lesson(
 
     combined = f"UPLOADED MATERIAL:\n{extracted_text}\n\nLECTURE TRANSCRIPT:\n{transcript}{engagement_note}"
 
-    lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a structured slideshow lesson.
+    lesson_prompt = f"""You are an educational content designer. Based on the provided learning materials below, generate a focused slideshow lesson.
 
 {combined}
 
-Create 5-8 slides that cover the main concepts from the material above.
+Create 5-8 slides covering the most important concepts from the material. Be concise — students should be able to scan each slide in under 30 seconds.
 
 Return ONLY a valid JSON array with no markdown, no backticks, and no extra text. Each slide must follow this exact schema:
 
 [
   {{
-    "title": "Short slide title",
-    "subtitle": "One-line engaging description of this slide's concept",
+    "title": "Short slide title (4 words max)",
+    "subtitle": "One crisp line describing the concept",
     "keywords": [
-      "A full descriptive sentence explaining the first key point in enough detail that a student understands it without prior context.",
-      "A full descriptive sentence explaining the second key point with a specific example or implication.",
-      "A full descriptive sentence explaining the third key point, connecting it to the broader concept."
+      "Brief key point 1 — one short sentence only.",
+      "Brief key point 2 — one short sentence only.",
+      "Brief key point 3 — one short sentence only."
     ],
     "theorem": {{
-      "label": "Formula or Rule name",
+      "label": "Formula name",
       "formula": "LaTeX formula string only, e.g. \\\\frac{{d}}{{dx}}[x^n] = nx^{{n-1}}"
     }},
-    "commons_query": "Exact Wikimedia Commons SVG search phrase for this concept, e.g. 'telescoping series', 'definite integral area', 'chain rule diagram'",
-    "imagen_prompt": "A clean, minimal educational diagram of [concept]. White background, simple geometric shapes and lines, clear mathematical labels in black, textbook illustration style, no decorative elements, no gradients, no shadows."
+    "commons_queries": [
+      "specific calculus/mathematics SVG phrase, e.g. 'riemann sum left endpoint calculus interval'",
+      "broader calculus phrase, e.g. 'riemann sum rectangle approximation mathematics'",
+      "general calculus fallback, e.g. 'definite integral calculus diagram'"
+    ],
+    "geogebra_query": "short math term for GeoGebra, e.g. 'riemann sum', 'chain rule', 'definite integral'"
   }}
 ]
 
 Rules:
 - Set "theorem" to null if no formula applies to this slide.
-- For "theorem.formula": use valid LaTeX syntax only. Will be rendered with KaTeX.
-- Keywords must be full descriptive sentences (1-2 sentences each), not short phrases.
-- For "imagen_prompt": write a specific, detailed prompt describing exactly what the diagram should show for this concept. Mention specific elements like axes, curves, shaded regions, labels. Keep style: white background, clean lines, textbook quality.
-- Slides should flow logically from introduction to core concepts to application."""
+- For "theorem.formula": valid LaTeX only, rendered with KaTeX.
+- Keywords: ONE short sentence each (under 15 words). No padding. Extract only the most important fact.
+- For "commons_queries": ALWAYS include the word "calculus" or "mathematics" in every phrase to avoid domain confusion. Rank from most to least specific.
+- For "geogebra_query": concise math term only.
+- Slides should flow logically from introduction to core concept to application."""
 
     response = model.generate_content(lesson_prompt)
     text = response.text.strip()
@@ -399,71 +411,195 @@ Rules:
     if slides is None:
         raise HTTPException(status_code=500, detail="Slide generation failed: JSON parsing error")
 
+    # Self-correction pass: Gemini reviews its own output and fixes issues before image search.
+    review_prompt = f"""You generated the following slide definitions for a calculus/mathematics course. Review and fix any problems.
+
+{json.dumps(slides, indent=2)}
+
+Check each slide for these issues and fix them:
+1. commons_queries: Every phrase MUST be specific to mathematics/calculus. If any query could return non-math results (e.g. computer science, networking, biology), rewrite it to include explicit mathematical context like "calculus", "mathematics", "number line", "graph function", etc.
+2. keywords: Each must be a single short sentence (under 15 words). Condense any that are too long.
+3. theorem.formula: Must be valid LaTeX. Fix any broken formulas.
+4. title: Must be 4 words or fewer.
+
+Return ONLY the corrected JSON array. No markdown, no explanation, no extra text. If a field is already correct, leave it unchanged."""
+
+    try:
+        review_resp = model.generate_content(review_prompt)
+        review_text = review_resp.text.strip()
+        if "```json" in review_text:
+            review_text = review_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in review_text:
+            review_text = review_text.split("```")[1].split("```")[0].strip()
+        reviewed = None
+        for _ in range(100):
+            try:
+                reviewed = json.loads(review_text)
+                break
+            except json.JSONDecodeError as e:
+                if 'escape' in str(e).lower():
+                    if e.pos < len(review_text) and review_text[e.pos] == '\\':
+                        review_text = review_text[:e.pos] + '\\\\' + review_text[e.pos + 1:]
+                    elif e.pos > 0 and review_text[e.pos - 1] == '\\':
+                        review_text = review_text[:e.pos - 1] + '\\\\' + review_text[e.pos:]
+                    else:
+                        break
+                else:
+                    break
+        if reviewed and isinstance(reviewed, list) and len(reviewed) == len(slides):
+            slides = reviewed
+            print(f"[Self-Review] Applied corrections to {len(slides)} slides")
+        else:
+            print("[Self-Review] Review parse failed or length mismatch — using original slides")
+    except Exception as e:
+        print(f"[Self-Review] Error: {e} — using original slides")
+
     extracted_image_urls = [f"/static/images/{f}" for f in image_files]
 
     WIKI_HEADERS = {"User-Agent": "CursorForCalculus/1.0 (educational tool; contact@example.com)"}
+    WIKI_API = "https://commons.wikimedia.org/w/api.php"
 
-    def get_commons_svg(query: str) -> Optional[str]:
-        try:
-            api_url = "https://commons.wikimedia.org/w/api.php"
-            search_res = req_lib.get(api_url, headers=WIKI_HEADERS, params={
-                "action": "query", "list": "search",
-                "srsearch": f"{query} filetype:svg",
-                "srnamespace": 6, "format": "json", "srlimit": 10
-            }, timeout=8)
-            results = search_res.json().get("query", {}).get("search", [])
-            svg_results = [r for r in results if r["title"].lower().endswith(".svg")]
-            if not svg_results:
-                return None
-            title = svg_results[0]["title"]
-            info_res = req_lib.get(api_url, headers=WIKI_HEADERS, params={
-                "action": "query", "titles": title,
-                "prop": "imageinfo", "iiprop": "url",
-                "iiurlwidth": 500, "format": "json"
-            }, timeout=8)
-            pages = info_res.json().get("query", {}).get("pages", {})
-            for page in pages.values():
-                imageinfo = page.get("imageinfo", [])
-                if imageinfo:
-                    url = imageinfo[0].get("thumburl") or imageinfo[0].get("url")
-                    print(f"[Commons SVG] '{query}' → '{title}' → {url}")
-                    return url
-        except Exception as e:
-            print(f"[Commons SVG] Error: {e}")
-        return None
+    def fetch_svg_candidates(queries: list) -> list:
+        """Try ranked queries, collect up to 6 unique (title, thumb_url) candidates."""
+        seen = set()
+        candidates = []
+        for query in queries:
+            try:
+                search_res = req_lib.get(WIKI_API, headers=WIKI_HEADERS, params={
+                    "action": "query", "list": "search",
+                    "srsearch": f"{query} filetype:svg",
+                    "srnamespace": 6, "format": "json", "srlimit": 5
+                }, timeout=8)
+                results = search_res.json().get("query", {}).get("search", [])
+                titles = [r["title"] for r in results if r["title"].lower().endswith(".svg") and r["title"] not in seen]
+                if not titles:
+                    continue
+                info_res = req_lib.get(WIKI_API, headers=WIKI_HEADERS, params={
+                    "action": "query", "titles": "|".join(titles[:3]),
+                    "prop": "imageinfo", "iiprop": "url",
+                    "iiurlwidth": 400, "format": "json"
+                }, timeout=8)
+                for page in info_res.json().get("query", {}).get("pages", {}).values():
+                    title = page.get("title", "")
+                    imageinfo = page.get("imageinfo", [])
+                    if imageinfo and title not in seen:
+                        thumb = imageinfo[0].get("thumburl") or imageinfo[0].get("url")
+                        if thumb:
+                            seen.add(title)
+                            candidates.append((title, thumb))
+            except Exception as e:
+                print(f"[Commons] query='{query}' error: {e}")
+            if len(candidates) >= 6:
+                break
+        return candidates
 
-    def generate_imagen(prompt: str) -> Optional[str]:
+    def select_best_image(candidates: list, slide_title: str, keywords: list) -> Optional[str]:
+        """Use Gemini vision to pick the clearest math/calculus image. Always falls back to first candidate."""
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            print(f"[Gemini Select] Single candidate for '{slide_title}': using it directly")
+            return candidates[0][1]
         try:
-            response = imagen_model.generate_images(
-                prompt=prompt,
-                number_of_images=1,
-                aspect_ratio="4:3",
+            parts = []
+            valid = []
+            for title, url in candidates:
+                try:
+                    r = req_lib.get(url, timeout=6)
+                    if r.ok:
+                        parts.append(Part.from_data(data=r.content, mime_type="image/png"))
+                        valid.append((title, url))
+                except Exception:
+                    continue
+            if not valid:
+                return candidates[0][1]
+            keyword_text = " ".join(keywords[:2]) if keywords else ""
+            selection_prompt = (
+                f'This slide is about "{slide_title}" from a calculus/mathematics course.\n'
+                f'Key concepts: {keyword_text}\n\n'
+                f'There are {len(valid)} images (labeled 0 to {len(valid)-1}).\n'
+                f'Pick the clearest image for a student seeing this concept for the first time.\n'
+                f'Criteria: simple, clean, directly illustrates the calculus concept, not cluttered.\n'
+                f'Respond with ONLY a single integer (0 to {len(valid)-1}).'
             )
-            if response.images:
-                filename = f"{uuid.uuid4()}.png"
-                filepath = os.path.join(IMAGES_DIR, filename)
-                with open(filepath, "wb") as f:
-                    f.write(response.images[0]._image_bytes)
-                print(f"[Imagen] Generated: {filename}")
-                return f"/static/images/{filename}"
+            parts.append(selection_prompt)
+            response = model.generate_content(parts)
+            answer = response.text.strip().lower()
+            digits = ''.join(c for c in answer if c.isdigit())
+            if digits:
+                idx = int(digits[:2])
+                if 0 <= idx < len(valid):
+                    print(f"[Gemini Select] slide='{slide_title}' → index {idx}: '{valid[idx][0]}'")
+                    return valid[idx][1]
         except Exception as e:
-            print(f"[Imagen] Error: {e}")
+            print(f"[Gemini Select] Error: {e}")
+        # Always fall back to first candidate rather than returning None
+        print(f"[Gemini Select] Falling back to first candidate for '{slide_title}'")
+        return candidates[0][1]
+
+    def get_geogebra_image(query: str) -> Optional[str]:
+        try:
+            res = req_lib.get(
+                "https://api.geogebra.org/v1.0/materials",
+                params={"q": query, "type": "ws", "limit": 5},
+                timeout=5,
+            )
+            for material in res.json().get("materials", []):
+                thumb = material.get("thumb")
+                if thumb:
+                    print(f"[GeoGebra] '{query}' → {thumb}")
+                    return thumb
+        except Exception as e:
+            print(f"[GeoGebra] Error: {e}")
         return None
 
     for i, slide in enumerate(slides):
-        commons_query = slide.pop("commons_query", "")
-        imagen_prompt = slide.pop("imagen_prompt", "")
+        commons_queries = slide.pop("commons_queries", [])
+        if isinstance(commons_queries, str):
+            commons_queries = [commons_queries]
+        geogebra_query = slide.pop("geogebra_query", "")
+        slide.pop("commons_query", None)
         slide.pop("diagram_svg", None)
+        slide.pop("imagen_prompt", None)
 
         if i < len(extracted_image_urls):
             slide["diagram_image_url"] = extracted_image_urls[i]
         else:
-            url = get_commons_svg(commons_query) if commons_query else None
+            candidates = fetch_svg_candidates(commons_queries) if commons_queries else []
+            url = select_best_image(candidates, slide.get("title", ""), slide.get("keywords", []))
             if not url:
-                url = generate_imagen(imagen_prompt) if imagen_prompt else None
+                url = get_geogebra_image(geogebra_query) if geogebra_query else None
             slide["diagram_image_url"] = url
 
     session_context["slideshow"] = slides
+
+    # Update whiteboard tutor context from uploaded material
+    if uploaded_file_summaries:
+        session_context["file_summaries"] = uploaded_file_summaries
+        session_context["last_analysis"] = None  # reset for new material
+
+        practice_prompt = f"""You are creating one practice problem for a student to solve step-by-step on a whiteboard.
+
+Based ONLY on the concepts in these course notes, write ONE challenging but solvable problem.
+
+COURSE NOTES:
+{extracted_text[:3000]}
+
+Requirements:
+- The problem must be directly grounded in a concept from the notes above.
+- It should require showing clear step-by-step work.
+- Write in plain spoken English. No LaTeX, no dollar signs, no backslashes.
+  Use words: "the integral of", "x squared", "from 0 to 4", etc.
+- Return ONLY the problem statement as a single plain-text sentence or two. No labels, no preamble."""
+
+        try:
+            practice_resp = model.generate_content(practice_prompt)
+            practice_problem = practice_resp.text.strip()
+            session_context["current_problem"] = practice_problem
+            print(f"[Whiteboard] Practice problem: {practice_problem[:100]}...")
+        except Exception as e:
+            print(f"[Whiteboard] Could not generate practice problem: {e}")
+
     lesson = {"slides": slides, "images": extracted_image_urls}
     session_content["lesson"] = lesson
     return lesson
@@ -479,6 +615,8 @@ async def get_lesson():
     if not session_content["lesson"]:
         raise HTTPException(status_code=404, detail="No lesson generated yet")
     return session_content["lesson"]
+
+
 
 
 @app.websocket("/ws/transcribe")
