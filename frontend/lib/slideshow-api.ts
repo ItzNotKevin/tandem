@@ -6,6 +6,7 @@ export interface AISlide {
   keywords: string[]
   theorem: { label: string; formula: string } | null
   diagram_image_url: string | null
+  script: string
 }
 
 export async function generateSlides(prompt: string, numSlides = 8): Promise<AISlide[]> {
@@ -22,4 +23,11 @@ export async function getSessionSlides(): Promise<AISlide[]> {
   const res = await fetch(`${BACKEND_URL}/slideshow/slides`)
   if (!res.ok) return []
   return res.json()
+}
+
+export async function getNarratorContext(): Promise<string> {
+  const res = await fetch(`${BACKEND_URL}/slideshow/narrator-context`)
+  if (!res.ok) return ''
+  const data = await res.json()
+  return data.context || ''
 }

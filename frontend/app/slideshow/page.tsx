@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { getSessionSlides, type AISlide } from '@/lib/slideshow-api'
+import { type AISlide, getNarratorContext, getSessionSlides } from '@/lib/slideshow-api'
 import BrandLogo from '@/components/BrandLogo'
 import katex from 'katex'
+import { useConversation } from '@elevenlabs/react'
+import { Mic, MicOff, Loader2 } from 'lucide-react'
 
 const arrowStyle = (disabled: boolean): React.CSSProperties => ({
   display: 'flex',
@@ -28,6 +30,15 @@ interface Slide {
   diagram: React.ReactNode
   keywords: string[]
   theorem?: { label: string; formula: string }
+}
+
+interface UploadedFileSummary {
+  filename?: string
+  summary?: string
+}
+
+interface SessionContextData {
+  file_summaries?: UploadedFileSummary[]
 }
 
 function DerivativeDiagram() {
@@ -175,12 +186,46 @@ const hardcodedSlides: Slide[] = [
 ]
 
 const DOT_WINDOW = 5
+const MOVE_ON_PROMPT_DELAY_MS = 12000
 
 function getVisibleDots(current: number, total: number) {
   if (total <= DOT_WINDOW) return { start: 0, end: total }
   const half = Math.floor(DOT_WINDOW / 2)
   const start = Math.min(Math.max(current - half, 0), total - DOT_WINDOW)
   return { start, end: start + DOT_WINDOW }
+}
+
+function buildQuestionSupportContext(
+  slide: AISlide | undefined,
+  slideNumber: number,
+  totalSlides: number,
+  fileSummaries: string,
+  userMessage?: string
+) {
+  return `LIVE CONTEXT UPDATE:
+Current slide: ${slideNumber} of ${totalSlides}
+Title: ${slide?.title || '(unknown)'}
+Slide script: ${slide?.script || '(none)'}
+Slide keywords: ${(slide?.keywords || []).join(', ') || '(none)'}
+Uploaded material summaries:
+${fileSummaries || '(none uploaded)'}
+
+RULES FOR INTERRUPTIONS:
+- If the student asks a question, answer using ONLY slide scripts and uploaded materials.
+- If the student sounds confused or says they still do not understand, explain the same concept again in a different way:
+  1) plain-language restatement
+  2) short concrete example or analogy
+  3) step-by-step mini breakdown
+- Keep each answer concise (1-4 sentences), then go silent.
+- If the answer is not in the provided material, say that clearly and point to the closest related slide.
+- After finishing slide narration and a short silence, ask exactly: "Are you ready to move on?"
+${userMessage ? `- Student just said: "${userMessage}"` : ''}`
+}
+
+function formatFileSummaries(session: SessionContextData | null) {
+  return (session?.file_summaries || [])
+    .map((f) => `- ${f.filename || 'Uploaded file'}: ${f.summary || ''}`)
+    .join('\n')
 }
 
 export default function SlideshowPage() {
@@ -190,14 +235,177 @@ export default function SlideshowPage() {
   const [returnHover, setReturnHover] = useState(false)
   const [proceedHover, setProceedHover] = useState(false)
   const [aiSlides, setAiSlides] = useState<AISlide[] | null>(null)
+  const currentRef = useRef(0)
+  const aiSlidesRef = useRef<AISlide[] | null>(null)
+  const narratorContextRef = useRef('')
+  const sessionDataRef = useRef<SessionContextData | null>(null)
+  const hasPromptedMoveOnRef = useRef<number | null>(null)
+  const awaitingMoveOnReplyRef = useRef(false)
   const router = useRouter()
 
-  // On mount, check if session already has generated slides
+  const conversation = useConversation({
+    onConnect: () => {
+      const slides = aiSlidesRef.current || []
+      const slide = slides[currentRef.current]
+      const fileSummaries = formatFileSummaries(sessionDataRef.current)
+
+      if (narratorContextRef.current) {
+        conversation.sendContextualUpdate(narratorContextRef.current)
+      }
+      conversation.sendContextualUpdate(
+        buildQuestionSupportContext(
+          slide,
+          currentRef.current + 1,
+          slides.length || 1,
+          fileSummaries
+        )
+      )
+      if (slide?.script) {
+        hasPromptedMoveOnRef.current = null
+        awaitingMoveOnReplyRef.current = false
+        conversation.sendUserMessage(`narrate slide ${currentRef.current + 1}`)
+      }
+    },
+    onDisconnect: () => console.log('Disconnected from ElevenLabs'),
+    onMessage: (message) => {
+      if (message.source !== 'user' || !message.message) return
+      const text = message.message.trim()
+      const isNoise = !text || text.length <= 3 || /^[.\s\u2026!?]+$/.test(text)
+      const isInternalReadCommand = /^narrate slide \d+/i.test(text) || text.startsWith('Read this aloud exactly as written:')
+      const isInternalSystemCommand = text.startsWith('[SYSTEM]')
+      if (isNoise || isInternalReadCommand) return
+      if (isInternalSystemCommand) return
+
+      if (awaitingMoveOnReplyRef.current) {
+        const isAffirmative = /^(yes|yeah|yep|sure|ok|okay|go ahead|next|continue|let'?s go|move on)\b/i.test(text)
+        const isNegative = /^(no|not yet|wait|hold on|stop)\b/i.test(text)
+        if (isAffirmative) {
+          awaitingMoveOnReplyRef.current = false
+          setCurrent((prev) => {
+            const slides = aiSlidesRef.current || []
+            if (prev >= slides.length - 1) return prev
+            return prev + 1
+          })
+          return
+        }
+        if (isNegative) {
+          awaitingMoveOnReplyRef.current = false
+        }
+      }
+
+      const slides = aiSlidesRef.current || []
+      const slide = slides[currentRef.current]
+      const fileSummaries = formatFileSummaries(sessionDataRef.current)
+
+      conversation.sendContextualUpdate(
+        buildQuestionSupportContext(
+          slide,
+          currentRef.current + 1,
+          slides.length || 1,
+          fileSummaries,
+          text
+        )
+      )
+    },
+    onError: (error) => console.error('ElevenLabs error:', error),
+  })
+
+  const { status, isSpeaking, sendContextualUpdate, sendUserMessage } = conversation
+  const isConnected = status === 'connected'
+
+  // Keep refs in sync so onConnect closure always has latest values
+  useEffect(() => { currentRef.current = current }, [current])
+  useEffect(() => { aiSlidesRef.current = aiSlides }, [aiSlides])
+
+  // When slide changes while connected, refresh context and narrate that slide
   useEffect(() => {
-    getSessionSlides().then((slides) => {
-      if (slides.length > 0) setAiSlides(slides)
-    })
+    if (!isConnected || !aiSlides) return
+    const slide = aiSlides[current]
+    const fileSummaries = formatFileSummaries(sessionDataRef.current)
+
+    sendContextualUpdate(
+      buildQuestionSupportContext(
+        slide,
+        current + 1,
+        aiSlides.length || 1,
+        fileSummaries
+      )
+    )
+    if (slide?.script) {
+      hasPromptedMoveOnRef.current = null
+      awaitingMoveOnReplyRef.current = false
+      sendUserMessage(`narrate slide ${current + 1}`)
+    }
+  }, [current, isConnected, aiSlides, sendContextualUpdate, sendUserMessage])
+
+  // After narration ends and silence continues, ask if the student wants to move on.
+  useEffect(() => {
+    if (!isConnected || isSpeaking || !aiSlides || aiSlides.length === 0) return
+    if (hasPromptedMoveOnRef.current === current) return
+
+    const timeout = setTimeout(() => {
+      if (!isConnected || isSpeaking) return
+      if (currentRef.current !== current) return
+      if (hasPromptedMoveOnRef.current === current) return
+
+      sendUserMessage('[SYSTEM] Ask exactly: "Are you ready to move on?" Then wait silently for the student response.')
+      hasPromptedMoveOnRef.current = current
+      awaitingMoveOnReplyRef.current = true
+    }, MOVE_ON_PROMPT_DELAY_MS)
+
+    return () => clearTimeout(timeout)
+  }, [isConnected, isSpeaking, current, aiSlides, sendUserMessage])
+
+  // On mount, load slideshow + narrator context + uploaded material summaries
+  useEffect(() => {
+    const loadSessionData = async () => {
+      try {
+        const [slides, narratorContext] = await Promise.all([
+          getSessionSlides(),
+          getNarratorContext(),
+        ])
+        if (slides.length > 0) setAiSlides(slides)
+        if (narratorContext) narratorContextRef.current = narratorContext
+      } catch (error) {
+        console.error('Failed to load slideshow session data:', error)
+      }
+
+      try {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+        const response = await fetch(`${backendUrl}/session/context`)
+        if (response.ok) {
+          const data = (await response.json()) as SessionContextData
+          sessionDataRef.current = data
+        }
+      } catch (error) {
+        console.error('Failed to load session context:', error)
+      }
+    }
+
+    loadSessionData()
   }, [])
+
+  const handleToggleNarration = async () => {
+    if (isConnected) {
+      await conversation.endSession()
+      return
+    }
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+      const agentId = process.env.NEXT_PUBLIC_ELEVEN_LABS_NARRATOR_AGENT_ID
+      if (!agentId) {
+        alert('Narrator Agent ID not configured. Set NEXT_PUBLIC_ELEVEN_LABS_NARRATOR_AGENT_ID in .env.local')
+        return
+      }
+      await conversation.startSession({ agentId, connectionType: 'webrtc' })
+    } catch (error) {
+      console.error('Failed to start narration:', error)
+    }
+  }
+
+  const navigateTo = (index: number) => {
+    setCurrent(index)
+  }
 
   const slideCount = aiSlides ? aiSlides.length : hardcodedSlides.length
   const currentAiSlide = aiSlides ? aiSlides[current] : null
@@ -229,7 +437,7 @@ export default function SlideshowPage() {
 
         {/* Left arrow */}
         <button
-          onClick={() => setCurrent((c) => c - 1)}
+          onClick={() => navigateTo(current - 1)}
           disabled={current === 0}
           onMouseEnter={() => setLeftHover(true)}
           onMouseLeave={() => setLeftHover(false)}
@@ -336,13 +544,15 @@ export default function SlideshowPage() {
                   </div>
                 ))}
               </div>
+
+
             </div>
           </div>
         </main>
 
         {/* Right arrow */}
         <button
-          onClick={() => setCurrent((c) => c + 1)}
+          onClick={() => navigateTo(current + 1)}
           disabled={current === slideCount - 1}
           onMouseEnter={() => setRightHover(true)}
           onMouseLeave={() => setRightHover(false)}
@@ -385,37 +595,97 @@ export default function SlideshowPage() {
           ← Return to Generation
         </button>
 
-        {/* Dots — sliding window */}
-        <div className="flex items-center gap-3">
-          <BrandLogo variant="mark" className="w-5 h-5 opacity-80" />
-          <div style={{ width: '72px', overflow: 'hidden' }}>
-          <div
-            style={{
-              display: 'flex',
-              gap: '8px',
-              transform: `translateX(-${getVisibleDots(current, slideCount).start * 16}px)`,
-              transition: 'transform 300ms ease',
-            }}
+        {/* Center: mic button + dots */}
+        <div className="flex flex-col items-center gap-3">
+
+          {/* Mic / stop button — same format as whiteboard */}
+          <button
+            onClick={handleToggleNarration}
+            disabled={status === 'connecting'}
+            className={`rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${
+              isConnected
+                ? isSpeaking
+                  ? 'bg-[#D93D3D] border-[#D93D3D]'
+                  : 'bg-white border-[#D93D3D]'
+                : status === 'connecting'
+                  ? 'bg-[#F6F4EE] border-[#E0D5C5] cursor-not-allowed'
+                  : 'bg-white border-[#E0D5C5] hover:border-[#D93D3D] hover:shadow-md'
+            }`}
           >
-            {Array.from({ length: slideCount }).map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCurrent(i)}
+            <div className="flex items-center gap-4 p-4">
+              <div className={`relative flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                isConnected ? (isSpeaking ? 'bg-white/20' : 'bg-[#D93D3D]/10') : 'bg-[#D93D3D]/10'
+              }`}>
+                {status === 'connecting' ? (
+                  <Loader2 className="w-5 h-5 text-[#8B7355] animate-spin" />
+                ) : isConnected ? (
+                  <Mic className={`w-5 h-5 ${isSpeaking ? 'text-white animate-pulse' : 'text-[#D93D3D]'}`} />
+                ) : (
+                  <MicOff className="w-5 h-5 text-[#D93D3D]" />
+                )}
+                {isSpeaking && (
+                  <span className="absolute inset-0 rounded-full bg-white/30 animate-ping" />
+                )}
+              </div>
+              <div className="text-left">
+                <p className={`text-[10px] font-black uppercase tracking-widest ${
+                  isConnected ? (isSpeaking ? 'text-white' : 'text-[#D93D3D]') : 'text-[#8B7355]'
+                }`}>
+                  {status === 'connecting' ? 'Connecting...'
+                    : isConnected ? (isSpeaking ? 'Narrating' : 'Listening')
+                    : 'Start Narration'}
+                </p>
+                <p className={`text-xs mt-0.5 ${
+                  isConnected ? (isSpeaking ? 'text-white/70' : 'text-[#8B7355]') : 'text-[#A08060]'
+                }`}>
+                  {status === 'connecting' ? 'Please wait...'
+                    : isConnected ? 'Click to end'
+                    : 'Click to begin'}
+                </p>
+              </div>
+              {isSpeaking && (
+                <div className="ml-auto flex items-end gap-0.5 h-5">
+                  <div className="w-1 h-2 bg-white/80 rounded-full animate-[bounce_0.6s_infinite]" />
+                  <div className="w-1 h-4 bg-white/80 rounded-full animate-[bounce_0.8s_infinite]" />
+                  <div className="w-1 h-3 bg-white/80 rounded-full animate-[bounce_0.7s_infinite]" />
+                  <div className="w-1 h-5 bg-white/80 rounded-full animate-[bounce_0.9s_infinite]" />
+                </div>
+              )}
+            </div>
+          </button>
+
+          {/* Dots */}
+          <div className="flex items-center gap-3">
+            <BrandLogo variant="mark" className="w-6 h-6 opacity-80" />
+            <div style={{ width: '72px', overflow: 'hidden' }}>
+              <div
                 style={{
-                  flexShrink: 0,
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: i === current ? '#c17f3a' : '#d4c4a8',
-                  transition: 'background-color 200ms ease',
-                  border: 'none',
-                  padding: 0,
-                  cursor: 'pointer',
+                  display: 'flex',
+                  gap: '8px',
+                  transform: `translateX(-${getVisibleDots(current, slideCount).start * 16}px)`,
+                  transition: 'transform 300ms ease',
                 }}
-              />
-            ))}
+              >
+                {Array.from({ length: slideCount }).map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => navigateTo(i)}
+                    style={{
+                      flexShrink: 0,
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: i === current ? '#c17f3a' : '#d4c4a8',
+                      transition: 'background-color 200ms ease',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
         </div>
 
         {/* Proceed to Problems */}

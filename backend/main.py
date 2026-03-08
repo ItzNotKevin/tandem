@@ -24,6 +24,7 @@ ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
 IMAGES_DIR = "static/images"
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
+
 # Unified in-memory session
 session_content: dict = {
     "extracted_text": "",
@@ -252,6 +253,11 @@ async def get_slideshow():
     return session_context.get("slideshow", [])
 
 
+@app.get("/slideshow/narrator-context")
+async def get_narrator_context():
+    return {"context": session_context.get("narrator_context", "")}
+
+
 @app.post("/session/upload")
 async def upload_material(file: UploadFile = File(...)):
     try:
@@ -401,7 +407,8 @@ Return ONLY a valid JSON array with no markdown, no backticks, and no extra text
       "broader calculus phrase, e.g. 'riemann sum rectangle approximation mathematics'",
       "general calculus fallback, e.g. 'definite integral calculus diagram'"
     ],
-    "geogebra_query": "short math term for GeoGebra, e.g. 'riemann sum', 'chain rule', 'definite integral'"
+    "geogebra_query": "short math term for GeoGebra, e.g. 'riemann sum', 'chain rule', 'definite integral'",
+    "script": "2-3 sentence spoken narration for this slide. Plain English only — no LaTeX, no dollar signs, no backslashes. Write as a professor speaking aloud, e.g. 'The definite integral measures the net area under a curve between two points. We compute it using the Fundamental Theorem of Calculus by finding an antiderivative and evaluating it at the bounds.'"
   }}
 ]
 
@@ -411,6 +418,7 @@ Rules:
 - Keywords: ONE short sentence each (under 15 words). No padding. Extract only the most important fact.
 - For "commons_queries": ALWAYS include the word "calculus" or "mathematics" in every phrase to avoid domain confusion. Rank from most to least specific.
 - For "geogebra_query": concise math term only.
+- For "script": 2-3 natural spoken sentences. No math symbols or LaTeX — spell everything out in words.
 - Slides should flow logically from introduction to core concept to application."""
 
     response = model.generate_content(lesson_prompt)
@@ -602,6 +610,61 @@ Return ONLY the corrected JSON array. No markdown, no explanation, no extra text
             slide["diagram_image_url"] = url
 
     session_context["slideshow"] = slides
+
+    # Generate narrator context for ElevenLabs slideshow agent
+    slides_text = "\n\n".join([
+        f"SLIDE {i+1} — {s.get('title', '')}\nSubtitle: {s.get('subtitle', '')}\nScript: {s.get('script', '')}"
+        for i, s in enumerate(slides)
+    ])
+    uploaded_summaries_text = "\n".join([
+        f"- {f.get('filename', 'uploaded file')}: {str(f.get('summary', ''))[:800]}"
+        for f in uploaded_file_summaries if isinstance(f, dict)
+    ]) or "(none)"
+    extracted_for_narrator = (extracted_text or "").strip()[:6000] or "(none)"
+    transcript_for_narrator = (transcript or "").strip()[:3000] or "(none)"
+
+    narrator_prompt = f"""You are configuring an AI voice narrator for a live educational slideshow app. The narrator is a voice agent that receives real-time updates as the student moves through slides.
+
+Write a narrator briefing (the first message it receives when a session starts) that:
+1. Defines its role: it is ONLY a narrator. It does NOT greet, introduce itself, or say its name. Ever.
+2. Instructs it to begin reading the Slide 1 script immediately upon receiving this briefing.
+3. Lists ALL slide scripts verbatim so it knows the full material.
+4. States: after each script, go completely silent and wait.
+5. States: when told "narrate slide N", immediately read that slide's script with no preamble.
+6. States: if the student asks a question, answer using ONLY these sources: slide scripts + uploaded material notes below.
+7. States: if the student says they still do not understand, re-explain the same concept in a DIFFERENT way (plain-language restatement, then simple example or analogy, then step-by-step breakdown), each time concise.
+8. States: if the answer is not in the provided sources, say that clearly and suggest what part of the lesson is most related.
+9. States: every interruption answer should be short (1-4 sentences), directly useful, then go silent.
+10. States: after finishing a slide and if the student has been silent for a bit, ask exactly: "Are you ready to move on?"
+11. States: when the student confirms, wait for the app command "narrate slide N" and then narrate that slide immediately.
+
+Here are all {len(slides)} slides:
+
+{slides_text}
+
+Uploaded material summaries:
+{uploaded_summaries_text}
+
+Uploaded raw material excerpt:
+{extracted_for_narrator}
+
+Lecture transcript excerpt:
+{transcript_for_narrator}
+
+Write the complete narrator briefing now. It will be injected directly into the live voice agent."""
+    try:
+        narrator_resp = model.generate_content(narrator_prompt)
+        session_context["narrator_context"] = narrator_resp.text.strip()
+    except Exception as e:
+        print(f"[Narrator Context] Error: {e}")
+        session_context["narrator_context"] = (
+            "You are a slideshow narrator. Do not greet. Begin reading Slide 1 immediately. "
+            + " | ".join([f"Slide {i+1}: {s.get('script', '')}" for i, s in enumerate(slides)])
+            + " After each script, wait silently. If interrupted with a question, answer using only these slide scripts and uploaded notes. "
+            + "If the student is still confused, explain the same idea a different way with a simple example. "
+            + "After a short silence, ask exactly 'Are you ready to move on?'. "
+            + "If not covered by the provided material, say that directly and point to the closest related slide."
+        )
 
     # Update whiteboard tutor context from uploaded material
     if uploaded_file_summaries:
