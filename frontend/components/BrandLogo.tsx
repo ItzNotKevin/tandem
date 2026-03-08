@@ -13,13 +13,11 @@ export default function BrandLogo({
 }: BrandLogoProps) {
   if (variant === "mark") {
     return (
-      <Link href="/" aria-label="Go to homepage" className="inline-block">
-        <img
-          src="/logo-mark.png/tandem%20logo%20png.png"
-          alt={title}
-          className={`object-contain ${className ?? ""}`}
-        />
-      </Link>
+      <img
+        src="/logo-mark.png/tandem%20logo%20png.png"
+        alt={title}
+        className={`object-contain ${className ?? ""}`}
+      />
     );
   }
 
