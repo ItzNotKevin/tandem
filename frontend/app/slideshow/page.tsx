@@ -565,6 +565,12 @@ export default function SlideshowPage() {
                   alt="Constant Derivative Graph"
                   className="w-full h-full object-contain rounded-xl mix-blend-multiply"
                 />
+              ) : current === 2 ? (
+                <img
+                  src="/power_rule_example.png"
+                  alt="Power Rule Example"
+                  className="w-full h-full object-contain rounded-xl mix-blend-multiply"
+                />
               ) : currentAiSlide ? (
                 currentAiSlide.diagram_image_url ? (
                   <img
