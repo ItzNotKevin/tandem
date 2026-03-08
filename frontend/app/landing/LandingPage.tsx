@@ -11,10 +11,8 @@ export default function LandingPage() {
       <main className={styles.main}>
         <BrandLogo className={styles.logo} />
 
-        <p className={styles.kicker}>AI Lecture Companion</p>
-
         <h1 className={styles.title}>
-          Learn with a tutor that adapts to exactly how you think.
+          Learn with a tutor that <span className={styles.highlight}>adapts to exactly how you think.</span>
         </h1>
 
         <p className={styles.subtitle}>
@@ -23,7 +21,7 @@ export default function LandingPage() {
         </p>
 
         <Link className={styles.cta} href="/record">
-          Start Session
+          <span className={styles.ctaText}>Start Session</span>
         </Link>
       </main>
     </div>

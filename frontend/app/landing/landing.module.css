@@ -48,7 +48,7 @@
 }
 
 .logo {
-  width: min(22rem, 84vw);
+  width: min(13rem, 60vw);
   margin-bottom: 0.85rem;
 }
 
@@ -68,6 +68,16 @@
   font-size: clamp(3rem, 6.3vw, 5.25rem);
   line-height: 1.08;
   color: #2a1d10;
+  animation: titleFadeIn 1s ease-out both;
+}
+
+.highlight {
+  background: linear-gradient(to right, #5A5145 20%, #9C8265 50%, #5A5145 80%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: textShimmer 4s linear infinite;
 }
 
 .subtitle {
@@ -81,7 +91,7 @@
 
 .cta {
   margin-top: 3.5rem;
-  height: 72px;
+  height: 48px;
   padding: 0 4rem;
   display: inline-flex;
   align-items: center;
@@ -93,11 +103,27 @@
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.25rem;
   text-decoration: none;
-  transition: background-color 0.2s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-.cta:hover {
-  background: #9e723f;
+.ctaText {
+  position: relative;
+  z-index: 1;
+}
+
+.cta::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #7a4f2e;
+  transform: translateX(-100%);
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: inherit;
+}
+
+.cta:hover::before {
+  transform: translateX(0);
 }
 
 @media (max-width: 640px) {
@@ -145,5 +171,22 @@
   }
   50% {
     transform: translate3d(-18px, 14px, 0);
+  }
+}
+
+@keyframes textShimmer {
+  to {
+    background-position: 200% center;
+  }
+}
+
+@keyframes titleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
