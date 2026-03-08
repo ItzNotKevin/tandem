@@ -559,6 +559,12 @@ export default function SlideshowPage() {
                   alt="Rules of Derivatives"
                   className="w-full h-full object-contain rounded-xl mix-blend-multiply"
                 />
+              ) : current === 1 ? (
+                <img
+                  src="/derivative_graph.png"
+                  alt="Constant Derivative Graph"
+                  className="w-full h-full object-contain rounded-xl mix-blend-multiply"
+                />
               ) : currentAiSlide ? (
                 currentAiSlide.diagram_image_url ? (
                   <img
