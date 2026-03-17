@@ -6,10 +6,10 @@ Unlike traditional study apps or static videos, Tandem acts as a **true real-tim
 ## The AI Tutor Experience
 Tandem is built around a powerful, multi-modal conversational AI designed to truly "see" and "speak".
 
-- 🎙️ **Natural Conversational Flow:** Have realistic back-and-forth verbal conversations with your tutor while you work. If the AI is explaining a concept and you suddenly realize the answer, you can **interrupt it mid-sentence**, and it will actively listen, gracefully halt, and pivot to address your new thought.
-- 👁️ **Live Whiteboard Vision:** The AI has a real-time view into your digital whiteboard. As you draw out math problems, equations, or diagrams, it watches your strokes and understands the context of what you are doing.
-- 📐 **Step-by-Step Understanding:** Tandem tracks intermediate steps, not just final answers. If you make a mistake halfway through a long calculation, the AI will spot it and gently guide you back on track without just giving away the answer.
-- ✅ **Correctness Validation:** The AI actively mathematically proves and validates your handwritten work. It knows exactly when you have successfully solved a problem, triggering rewarding congratulations and moving you seamlessly to the next challenge.
+-  **Natural Conversational Flow:** Have realistic back-and-forth verbal conversations with your tutor while you work. If the AI is explaining a concept and you suddenly realize the answer, you can **interrupt it mid-sentence**, and it will actively listen, gracefully halt, and pivot to address your new thought.
+-  **Live Whiteboard Vision:** The AI has a real-time view into your digital whiteboard. As you draw out math problems, equations, or diagrams, it watches your strokes and understands the context of what you are doing.
+-  **Step-by-Step Understanding:** Tandem tracks intermediate steps, not just final answers. If you make a mistake halfway through a long calculation, the AI will spot it and gently guide you back on track without just giving away the answer.
+-  **Correctness Validation:** The AI actively mathematically proves and validates your handwritten work. It knows exactly when you have successfully solved a problem, triggering rewarding congratulations and moving you seamlessly to the next challenge.
 
 ## Core Workflow
 ### 1) Session Setup (`/record`)
